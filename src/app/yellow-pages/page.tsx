@@ -37,12 +37,14 @@ export default function YellowPagesPage() {
               public-readable defaults and admin bypass; anonymous callers see only published rows.
             </li>
             <li className={styles.featureItem}>
-              API keys, outbound webhooks (HMAC-signed), and read-only connectors (Coastguard,
-              DNS) for integrating the catalog with other systems.
+              API keys, outbound webhooks (HMAC-signed), and bidirectional connectors (Coastguard,
+              DNS, and the SaaS tools you already run) that read AND write back through governed,
+              typed actions &mdash; Yellow Pages sits above your existing stack, not instead of it.
             </li>
             <li className={styles.featureItem}>
-              Cross-resource search and an agent registry that lets Helmsman-managed agents
-              register themselves into the catalog.
+              Cross-resource search backed by a unified semantic graph &mdash; services, teams,
+              accounts, and agents correlated across the whole suite, one operational data model
+              every app and agent reasons against.
             </li>
           </ul>
           <p className={styles.audience}>

@@ -41,6 +41,11 @@ export default function RolodexPage() {
               Admin portal surfaces for service-account PATs, webhooks, and directory sync, plus
               an unauthenticated public search subtree.
             </li>
+            <li className={styles.featureItem}>
+              Enterprise identity as a platform guarantee &mdash; SSO, SAML, and SCIM provisioning
+              keep directory groups and access grants in sync automatically, no per-app auth
+              wiring.
+            </li>
           </ul>
           <p className={styles.audience}>
             Built for engineers and internal services that need directory data via API, and org

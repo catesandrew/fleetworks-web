@@ -35,11 +35,18 @@ export default function HelmsmanPage() {
             </li>
             <li className={styles.featureItem}>
               Multi-agent processes &mdash; sequential, concurrent, handoff, and supervisor
-              topologies, with human-in-the-loop approval gates.
+              topologies &mdash; move along an autonomy ladder from human-supervised to
+              semi-autonomous to fully unattended as trust is earned, with approval gates at every
+              stage.
             </li>
             <li className={styles.featureItem}>
-              A governed registry of MCP tool servers that agents can use, plus two-way sync with
-              Yellow Pages.
+              A governed registry of MCP tool servers that agents can use &mdash; every deployed
+              service gets a scoped, typed MCP endpoint exposed automatically at publish time, plus
+              two-way sync with Yellow Pages.
+            </li>
+            <li className={styles.featureItem}>
+              Describe a deployment or pipeline in natural language and Helmsman scaffolds the
+              application, CI/CD config, and agent wiring &mdash; no manual manifest authoring.
             </li>
           </ul>
           <p className={styles.audience}>
