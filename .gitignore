@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+.next/
+next-env.d.ts
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.test
+.env.*.local
+
+# Test coverage
+coverage/
+
+.vercel
+
+# Impeccable live-mode durable session journal (local recovery state, not project source)
+.impeccable/live/sessions/

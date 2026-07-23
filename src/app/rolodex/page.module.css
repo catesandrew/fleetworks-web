@@ -1,0 +1,97 @@
+.hero {
+  background: var(--fw-color-paper);
+  color: var(--fw-color-ink);
+  padding: clamp(32px, 6vw, 64px) clamp(24px, 5vw, 64px);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, 420px);
+  align-items: center;
+  gap: 56px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+@media (max-width: 860px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.headline {
+  font-family: 'Bricolage Grotesque', var(--fw-font-sans);
+  font-weight: 600;
+  font-size: clamp(2.75rem, 5vw + 1rem, 5.5rem);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  margin: 0 0 20px;
+  text-wrap: balance;
+}
+
+.sub {
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  color: var(--fw-color-muted);
+  max-width: 46ch;
+  margin: 0 0 28px;
+}
+
+.features {
+  list-style: none;
+  margin: 0 0 28px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 48ch;
+}
+
+.featureItem {
+  position: relative;
+  padding-left: 20px;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--fw-color-ink);
+}
+
+.featureItem::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--rolodex-accent, #111827);
+}
+
+.audience {
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--fw-color-muted);
+  max-width: 46ch;
+  margin: 0 0 32px;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btnPrimary {
+  display: inline-flex;
+  align-items: center;
+  background: var(--fw-color-ink);
+  color: var(--fw-color-paper);
+  padding: 14px 28px;
+  border-radius: var(--fw-radius-sm, 6px);
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.2s ease;
+}
+
+.btnPrimary:hover {
+  background: var(--rolodex-accent, #111827);
+}

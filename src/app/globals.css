@@ -1,0 +1,14 @@
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--fw-font-sans);
+  color: var(--fw-color-ink);
+  background: var(--fw-color-paper);
+}

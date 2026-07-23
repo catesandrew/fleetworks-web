@@ -1,0 +1,74 @@
+/*
+ * Fleetworks apex hero graphic — the hub-and-spoke instrument diagram from
+ * DESIGN.md's "Control Room" system. Depth comes from a hairline border +
+ * one tonal surface step (the Schematic Rule); the only color live at any
+ * time is `--hero-accent`, set by the consuming page (the One Light Rule).
+ */
+
+.diagram {
+  position: relative;
+  background: var(--fw-color-surface, #f9fafb);
+  border: 1px solid var(--fw-color-border, #e5e7eb);
+  border-radius: var(--fw-radius-md, 10px);
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.diagramInner {
+  width: 84%;
+}
+
+.svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.line {
+  stroke: var(--fw-color-border, #e5e7eb);
+  stroke-width: 1.5;
+}
+
+.lineActive {
+  stroke: var(--hero-accent, #111827);
+  stroke-width: 2;
+  opacity: 0.65;
+}
+
+.node {
+  fill: var(--fw-color-paper, #fff);
+  stroke: var(--fw-color-ink, #0b0f14);
+  stroke-width: 1.5;
+}
+
+.nodeActive {
+  fill: var(--hero-accent, #111827);
+  stroke: var(--hero-accent, #111827);
+  opacity: 0.65;
+}
+
+.hub {
+  fill: var(--fw-color-paper, #fff);
+  stroke: var(--fw-color-ink, #0b0f14);
+  stroke-width: 2;
+}
+
+.label {
+  font-family: var(--fw-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  fill: var(--fw-color-muted, #6b7280);
+}
+
+.coord {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  font-family: var(--fw-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--hero-accent, #111827);
+}
