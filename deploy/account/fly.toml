@@ -1,0 +1,52 @@
+# Fly.io deploy for the branded Fleetworks hub login UI (Zitadel Login v2).
+#
+# This is the official `zitadel-login` image, NOT a fork. Branding comes from
+# Zitadel's instance label policy (see infra/zitadel.tf), which the app fetches
+# at runtime — colors and logo change with `terraform apply`, no rebuild.
+#
+# NOTE ON THE PATH: Next.js bakes `basePath` at BUILD time, and the official
+# image is built with NEXT_PUBLIC_BASE_PATH=/ui/v2/login. The UI therefore lives
+# at https://account.fleetworks.dev/ui/v2/login even though it owns the whole
+# host. Users never type it — Zitadel redirects them there. Serving it at `/`
+# would require forking and rebuilding the image.
+#
+# Secrets are NOT in this file:
+#   ZITADEL_SERVICE_USER_TOKEN   (the login-client PAT; IAM_LOGIN_CLIENT role)
+app            = "fleetworks-account"
+primary_region = "sjc"
+
+[build]
+  image = "ghcr.io/zitadel/zitadel-login:v4.16.2"
+
+[env]
+  ZITADEL_API_URL = "https://id.fleetworks.dev"
+  # Must match the value the image was built with.
+  NEXT_PUBLIC_BASE_PATH = "/ui/v2/login"
+
+  # Login v2 is hosted on a different origin than the API, so its own origin has
+  # to be allowed for Next.js server actions.
+  SERVER_ACTION_ALLOWED_ORIGINS = "account.fleetworks.dev"
+
+  # Zitadel picks the virtual instance from the request Host header. Left alone,
+  # this app forwards the BROWSER's host (account.fleetworks.dev), and the API
+  # answers "Instance not found" because ExternalDomain is id.fleetworks.dev.
+  # Pinning the forwarded host is what the upstream compose reference does.
+  CUSTOM_REQUEST_HEADERS = "Host:id.fleetworks.dev,X-Forwarded-Proto:https"
+
+[http_service]
+  internal_port        = 3000
+  force_https          = true
+  auto_stop_machines   = false
+  auto_start_machines  = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval     = "30s"
+    timeout      = "5s"
+    grace_period = "30s"
+    method       = "GET"
+    path         = "/ui/v2/login/healthy"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "512mb"

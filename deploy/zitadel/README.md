@@ -48,6 +48,44 @@ curl -s --http2 -D - -o /dev/null -X POST \
 Expect `HTTP/2 200`, `content-type: application/grpc`, and `Grpc-Status`
 trailers. A JSON 404 body means the proxy is downgrading to HTTP/1.1.
 
+## Hosting Login v2 on its own hostname
+
+Upstream (compose, Helm) serves Login v2 under `/ui/v2/login` on the **same**
+host as the API, because Zitadel resolves the virtual instance from the request
+`Host` header. Fleetworks serves it on `account.fleetworks.dev` instead, which
+needs one extra step or every login 500s with:
+
+```
+unable to set instance using origin &{account.fleetworks.dev account.fleetworks.dev https}
+(ExternalDomain is id.fleetworks.dev): Instance not found
+```
+
+`account.fleetworks.dev` must be registered as an **instance domain** (System
+API `AddDomain`). Things that do *not* fix it, tried and measured:
+
+- **Trusted domains** (`POST /admin/v1/trusted_domains`) — different concept;
+  the instance lookup still fails.
+- **`CUSTOM_REQUEST_HEADERS=Host:id.fleetworks.dev`** — in `apps/login/src/proxy.ts`
+  those headers are applied only on the *proxied* paths (`/oauth/`, `/oidc/`,
+  `/.well-known/`, …), after the early return for login pages, so login routes
+  never see them.
+- Restarting Zitadel to clear the instance cache.
+
+The login app's `getInstanceHost()` reads `x-zitadel-instance-host` →
+`x-zitadel-forward-host` → `host`, and Fly passes the browser's `host`. So the
+server has to accept that host, which is exactly what `AddDomain` does.
+
+The System API needs a keypair that the admin API cannot create:
+
+```bash
+openssl genrsa -out infra/zitadel-system-user.key 2048
+PUB=$(openssl rsa -in infra/zitadel-system-user.key -pubout | base64 | tr -d '\n')
+fly secrets set -a fleetworks-zitadel "ZITADEL_SYSTEMAPIUSERS={\"systemuser\":{\"KeyData\":\"$PUB\"}}"
+# then, after redeploy:
+node scripts/zitadel-system-api.mjs POST /system/v1/instances/<instanceId>/domains \
+  '{"domain":"account.fleetworks.dev"}'
+```
+
 ## Secrets
 
 None are committed. They live in Fly secrets, with local gitignored copies under

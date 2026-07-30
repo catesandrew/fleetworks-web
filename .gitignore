@@ -45,3 +45,4 @@ infra/zitadel-login-client.pat
 infra/zitadel-ids.json
 infra/fly-postgres-superuser.txt
 infra/zitadel-db-password.txt
+infra/zitadel-system-user.key
