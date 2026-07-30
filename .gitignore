@@ -39,3 +39,9 @@ infra/*.tfstate
 infra/*.tfstate.*
 infra/*.plan
 infra/zitadel-provider-key.json
+infra/zitadel-masterkey.txt
+infra/zitadel-admin-password.txt
+infra/zitadel-login-client.pat
+infra/zitadel-ids.json
+infra/fly-postgres-superuser.txt
+infra/zitadel-db-password.txt

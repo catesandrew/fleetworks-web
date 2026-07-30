@@ -1,0 +1,80 @@
+# Fly.io deploy for the Fleetworks identity hub (Zitadel).
+#
+# WHY FLY AND NOT RENDER: Zitadel requires a reverse proxy that forwards HTTP/2
+# to the origin (h2c). Render's edge terminates HTTP/2 and speaks HTTP/1.1 to
+# the container, so native-gRPC clients (notably the `zitadel` Terraform
+# provider) get Zitadel's REST 404 `{"code":5,"message":"Not Found"}` instead of
+# reaching the gRPC handler. gRPC-Web and Connect survive that downgrade, so the
+# console and Login v2 worked on Render — but the config plane could not be
+# managed as code. `h2_backend = true` below is what fixes it.
+#
+# Secrets are NOT in this file. Set them with `fly secrets set` (see README.md):
+#   ZITADEL_MASTERKEY
+#   ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
+#   ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
+#   ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD
+app            = "fleetworks-zitadel"
+primary_region = "sjc"
+
+[build]
+  # Pinned digest-by-tag; upgrades are an explicit tag bump + `fly deploy`.
+  image = "ghcr.io/zitadel/zitadel:v4.16.2"
+
+[experimental]
+  # The image ENTRYPOINT is /app/zitadel; this supplies its arguments.
+  cmd = ["start-from-init", "--masterkeyFromEnv"]
+
+[env]
+  ZITADEL_PORT           = "8080"
+  ZITADEL_EXTERNALDOMAIN = "id.fleetworks.dev"
+  ZITADEL_EXTERNALPORT   = "443"
+  ZITADEL_EXTERNALSECURE = "true"
+  # Fly terminates TLS at the edge and re-encrypts internally; Zitadel itself
+  # serves cleartext h2c on internal_port.
+  ZITADEL_TLS_ENABLED = "false"
+
+  # Postgres over Fly's private network (flycast). Admin credentials are
+  # supplied so `start-from-init` can CREATE the `zitadel` database and its
+  # unprivileged owner itself — Fly Postgres exposes no "create database" CLI,
+  # and the runtime user should not be the cluster superuser.
+  ZITADEL_DATABASE_POSTGRES_HOST           = "fleetworks-zitadel-db.flycast"
+  ZITADEL_DATABASE_POSTGRES_PORT           = "5432"
+  ZITADEL_DATABASE_POSTGRES_DATABASE       = "zitadel"
+  ZITADEL_DATABASE_POSTGRES_USER_USERNAME  = "zitadel"
+  ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE  = "disable"
+  ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME = "postgres"
+  ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE = "disable"
+
+  ZITADEL_FIRSTINSTANCE_ORG_NAME                          = "Fleetworks"
+  ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME                = "admin"
+  ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED  = "false"
+
+  # Login V2 is served by a separate service (account.fleetworks.dev). Until it
+  # is live, keep the built-in V1 login so the console stays reachable.
+  ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED = "false"
+
+  ZITADEL_LOGSTORE_ACCESS_STDOUT_ENABLED = "true"
+
+[http_service]
+  internal_port       = 8080
+  force_https         = true
+  auto_stop_machines  = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.http_options]
+    # THE reason this app is on Fly: forward HTTP/2 cleartext to the origin so
+    # native gRPC (Terraform provider, server-side SDKs) reaches Zitadel's gRPC
+    # handler instead of its REST mux.
+    h2_backend = true
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout  = "5s"
+    grace_period = "60s"
+    method   = "GET"
+    path     = "/debug/healthz"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "1gb"

@@ -15,6 +15,27 @@ variable "cloudflare_api_token" {
   sensitive   = true
 }
 
+variable "hub_identity_domain" {
+  description = "The hub's SES From/identity domain — the key into var.domains that Zitadel sends transactional mail as."
+  type        = string
+  default     = "auth.id.fleetworks.dev"
+
+  validation {
+    condition     = startswith(var.hub_identity_domain, "auth.")
+    error_message = "hub_identity_domain must be an auth.<host>.fleetworks.dev identity domain."
+  }
+}
+
+variable "zitadel_org_id" {
+  description = "Zitadel organization id that owns the Fleetworks project and its OIDC apps. Not a secret; read from GET /admin/v1/orgs/default on the live instance."
+  type        = string
+}
+
+variable "yellow_pages_supabase_ref" {
+  description = "Supabase project ref for yellow-pages — forms the fixed OIDC callback https://<ref>.supabase.co/auth/v1/callback that Zitadel must allow."
+  type        = string
+}
+
 variable "domains" {
   description = <<-EOT
     SES/DNS domain map for the auth hub, keyed by the From/identity domain
