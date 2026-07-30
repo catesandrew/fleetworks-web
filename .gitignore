@@ -30,3 +30,12 @@ coverage/
 
 # Impeccable live-mode durable session journal (local recovery state, not project source)
 .impeccable/live/sessions/
+
+# Terraform (infra/) — state is a secret store; tfvars hold real ids; the
+# Zitadel provider machine-user key is a credential. Only *.tf is committed.
+infra/.terraform/
+infra/*.tfvars
+infra/*.tfstate
+infra/*.tfstate.*
+infra/*.plan
+infra/zitadel-provider-key.json
