@@ -150,6 +150,70 @@ Homebrew's `terraform` formula is frozen at 1.5.7 because of the BUSL relicense.
 This root's state key (`fleetworks/hub`) is separate from every other repo's, so
 nothing else is pulled forward to the newer version.
 
+## Account linking — measured, not assumed
+
+Supabase's docs do not state whether the `email_verified` claim gates identity
+linking, so the pilot measured it. `scripts/hub-linking-smoke.mjs` seeds a
+password account on the product project and a hub account with the same email;
+after a federated sign-in the project has:
+
+```
+id           = ed77ac12-…                (unchanged — no duplicate user)
+identities   = email  +  custom:fleetworks
+app_metadata = {"providers": ["email", "custom:fleetworks"]}
+```
+
+**Verified-email linking works: one `auth.users` row, two identities.** The hub
+identity carries `email_verified: true`; the pre-existing password identity
+reports `email_verified: false` in its identity_data even though
+`email_confirmed_at` is set — do not use the identity claim as the source of
+truth for local confirmation state.
+
+**The unverified-email guard case could NOT be measured, and Supabase's
+behaviour there remains unknown.** Zitadel refuses to let an unverified-email
+user authenticate at all ("Initial User not supported"), and refuses to set a
+password or verify the address on a user in `USER_STATE_INITIAL`. So this hub
+structurally cannot emit an unverified-email identity — the risk is contained
+upstream rather than by Supabase. If a future IdP (BYO-IdP, sub-project 5) can
+assert an unverified email, re-run this guard before trusting it.
+
+## Rollback
+
+Measured against the live project:
+
+| Lever | Effect on federated `/authorize` | Effect on password login |
+| --- | --- | --- |
+| `PUT /auth/v1/admin/custom-providers/custom:fleetworks` with `enabled:false` | **400 — blocked** | none |
+| `custom_oauth_enabled: false` (Management API) | **no effect — still 302s to the hub** | none |
+| Hide the button in the app | no server-side effect | none |
+
+**`custom_oauth_enabled` is not a kill switch.** The provider's own `enabled`
+flag is. Note the update is keyed by identifier (`custom:fleetworks`), not the
+provider UUID, and a full payload is required — a partial `{"enabled":false}`
+body is rejected with 400.
+
+```bash
+# disable (client_secret must be re-sent; it is write-only)
+curl -X PUT "https://<ref>.supabase.co/auth/v1/admin/custom-providers/custom:fleetworks" \
+  -H "apikey: $SECRET_KEY" -H "Authorization: Bearer $SECRET_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"provider_type":"oidc","identifier":"custom:fleetworks","name":"Fleetworks",
+       "issuer":"https://id.fleetworks.dev","client_id":"…","client_secret":"…",
+       "scopes":["openid","profile","email"],"enabled":false}'
+```
+
+## Adding the next app
+
+1. `terraform apply` a second `zitadel_application_oidc` with that project's
+   Supabase callback (`https://<ref>.supabase.co/auth/v1/callback`).
+2. Register the provider on that project with `syncCustomOidcProvider`
+   (`@cogs/supabase-sync`), using the new client id/secret.
+3. Add its redirects to `uri_allow_list` — including the mobile scheme, which
+   comes from the Expo app's `scheme`, NOT its bundle id (`yellowpages://**`,
+   not `com.yellowpages.mobile://**`).
+4. Add the web callback route + button, and the mobile `signInWithFleetworks`
+   helper + button.
+
 ## Known follow-ups
 
 - Fly Postgres here is **unmanaged** — no managed backups or DR. Move to
