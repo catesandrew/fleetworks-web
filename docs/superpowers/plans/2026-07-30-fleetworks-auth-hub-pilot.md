@@ -65,18 +65,26 @@
 - [ ] **Step 4:** Once the console works end-to-end, re-provision against a persistent Render Postgres (not the throwaway), set autoDeploy off (pin the image tag), store masterkey in a password manager. Verify discovery doc lists `issuer: https://id.fleetworks.dev`.
 - [ ] **Step 5:** Commit the `deploy/zitadel/README.md` runbook (image tag, env var list WITHOUT values, h2c outcome, upgrade = rerun `setup`).
 
-## Task 3: Configure Zitadel — org, project, OIDC app, SES SMTP
+## Task 3: Configure Zitadel — org, project, OIDC app, SES SMTP (via Terraform)
 
-**Files:** Zitadel Console/API; record IDs in `deploy/zitadel/README.md`.
+**Approach:** Use the **official `zitadel/zitadel` Terraform provider** to manage Zitadel's config as IaC (not console clicks). Prereq (chicken-and-egg): Zitadel must be up (Task 2) and a **machine user + JWT key** created for the provider to authenticate. Pin the provider version and confirm each resource type below exists in that version before relying on it.
 
-**Interfaces:** Produces `FLEETWORKS_OIDC_CLIENT_ID` + `FLEETWORKS_OIDC_CLIENT_SECRET` (for Supabase) and a verified sending SMTP.
+**Files:**
+- Create: `fleetworks-web/infra/zitadel.tf` — provider block (`zitadel/zitadel`, domain `id.fleetworks.dev`, `jwt_profile_file`), + resources: `zitadel_project`, `zitadel_application_oidc` (the yp Supabase client), `zitadel_smtp_config` (SES). Org can be the default instance org or a `zitadel_org`.
+- Create: `fleetworks-web/infra/zitadel-provider-key.json` (gitignored) — the machine-user JWT key.
+- Record IDs/outputs in `deploy/zitadel/README.md`.
 
-- [ ] **Step 1:** In Console, confirm org "Fleetworks" + create a Project "Fleetworks Suite".
-- [ ] **Step 2:** Create an OIDC **Web** application "yellow-pages" (auth method: Code w/ client_secret, or PKCE). Redirect URI = the yp Supabase callback (read the exact value Supabase shows when creating the provider in Task 5 — typically `https://ndeubizireenktnvimiq.supabase.co/auth/v1/callback`). Scopes available: `openid profile email`. Capture client_id + client_secret.
-- [ ] **Step 3:** Configure SES SMTP: `POST https://id.fleetworks.dev/admin/v1/email/smtp` (admin token) with `{ senderAddress:"no-reply@auth.id.fleetworks.dev", senderName:"Fleetworks", host:"email-smtp.us-east-2.amazonaws.com:587", user:<Task1 smtp_username>, password:<Task1 smtp_password>, tls:true }`, then activate it. If `SMTPSenderAddressMatchesInstanceDomain` blocks it, set that domain policy false.
-- [ ] **Step 4 (verify):** Trigger a Zitadel email (invite a test user) → confirm delivery + SPF/DKIM/DMARC pass (check headers). 
-- [ ] **Step 5 (verify email_verified claim):** With a test Zitadel user, hit the token/userinfo endpoint and confirm the ID token carries `email` + `email_verified: true`. Record the exact claim shape (gates Task 5's linking assumption).
-- [ ] **Step 6:** Commit the runbook update (IDs, no secrets).
+**Interfaces:** Produces `FLEETWORKS_OIDC_CLIENT_ID` + `FLEETWORKS_OIDC_CLIENT_SECRET` (TF outputs, sensitive) for Supabase, and a verified sending SMTP.
+
+- [ ] **Step 1:** In Console (one-time, can't be TF'd — it's the bootstrap): create a Machine User with org-owner/IAM perms, generate a JWT key → `zitadel-provider-key.json` (gitignored). Add the `zitadel` provider + version pin to `versions.tf`.
+- [ ] **Step 2:** `zitadel.tf`: `zitadel_project "fleetworks_suite"` + `zitadel_application_oidc "yellow_pages"` — `redirect_uris = ["https://ndeubizireenktnvimiq.supabase.co/auth/v1/callback"]` (confirm the exact value Supabase shows in Task 5), response/grant types = code, auth_method = `OIDC_AUTH_METHOD_TYPE_BASIC` (client_secret) or PKCE, `dev_mode=false`. Outputs: `client_id`, `client_secret` (sensitive).
+- [ ] **Step 3:** `zitadel_smtp_config` (or the current resource name) with SES: `host="email-smtp.us-east-2.amazonaws.com:587"`, `user`/`password` from Task 1 TF outputs (wire via `terraform_remote_state` or a var), `sender_address="no-reply@auth.id.fleetworks.dev"`, `sender_name="Fleetworks"`, `tls=true`. If a `zitadel_smtp_config` resource doesn't exist in the pinned provider, fall back to `POST /admin/v1/email/smtp` and note it. If `SMTPSenderAddressMatchesInstanceDomain` blocks the sender, set that domain policy false (TF `zitadel_domain_policy` or console).
+- [ ] **Step 4:** `terraform plan` + `apply` (same env exports as Task 1, plus the zitadel provider auth). Capture the client_id/secret outputs.
+- [ ] **Step 5 (verify):** Trigger a Zitadel email (invite a test user) → confirm delivery + SPF/DKIM/DMARC pass (headers).
+- [ ] **Step 6 (verify email_verified claim):** With a test Zitadel user, inspect the ID token/userinfo → confirm `email` + `email_verified: true` present. Record the exact claim shape (gates Task 5/8 linking).
+- [ ] **Step 7:** Commit `zitadel.tf` + `versions.tf` (NOT the key json/tfvars/state) + the runbook update.
+
+> Note: later sub-projects (central RBAC #4, enterprise BYO-IdP #5) extend this same `zitadel.tf` with `zitadel_project_role`/`zitadel_user_grant` and `zitadel_org_idp_oidc`/`_saml` resources — the config plane is IaC from here on. The Render **server** deploy (Task 2) is separately managed via a `render.yaml` blueprint or a Render TF provider; the Supabase Custom OIDC provider (Task 5) stays a supabase-sync script unless the Supabase TF provider gains coverage.
 
 ## Task 4: Fork + brand Zitadel Login v2 → account.fleetworks.dev
 
