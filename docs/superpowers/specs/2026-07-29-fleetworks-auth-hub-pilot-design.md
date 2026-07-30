@@ -23,6 +23,14 @@ OIDC/SAML *provider*, so Supabase cannot BE the IdP other Supabases federate to.
 alternatives (Cognito/Zitadel-Cloud/WorkOS) rejected for per-user cost + (Cognito) weak
 central org/role modeling; ops/security burden of self-hosting accepted.
 
+## Research findings (2026-07-30) — spec refinements (verified vs official docs)
+
+- **Supabase federation mechanism = first-class Custom OIDC provider** (NOT SAML, NOT the legacy `external_*` keys). Configure per project via `supabase.auth.admin.customProviders.createProvider({ provider_type: 'oidc', identifier: 'custom:fleetworks', name: 'Fleetworks', issuer: 'https://id.fleetworks.dev', client_id, client_secret, scopes: ['openid','profile','email'], acceptable_client_ids: [<mobile client id>] })`. Sign-in: `signInWithOAuth({ provider: 'custom:fleetworks' })`. (SAML SSO is explicitly EXCLUDED from identity linking → would create a duplicate user; Custom OIDC is required.)
+- **Auto-linking by verified email is Supabase's DEFAULT** (no `linkIdentity` code); it also prunes unconfirmed identities (takeover guard). ⚠️ Docs do NOT confirm it inspects Zitadel's `email_verified` claim before linking — must be proven with a smoke test (existing verified-email password user → federated login → same `auth.users` row).
+- **Mobile flow correction:** Supabase's canonical Expo path uses **token-in-redirect-URL + `supabase.auth.setSession({ access_token, refresh_token })`** (via `expo-web-browser` `openAuthSessionAsync` + `expo-auth-session` `QueryParams.getQueryParams`), NOT `exchangeCodeForSession`. RN client needs `detectSessionInUrl: false` + AsyncStorage. (The `exchangeCodeForSession`+`flowType:'pkce'` variant is unverified on mobile — use the documented setSession path unless proven.)
+- **Custom hub UI realization:** Zitadel ships a **first-party, self-hostable, MIT Login v2 (Next.js)** built on its Session API. **Recommended:** fork/theme that for `account.fleetworks.dev` rather than hand-rolling Session-API calls (GetAuthRequest → CreateSession → CreateCallback). Same "custom branded UI on apex" outcome, far less effort + fully supported. (Decision pending — see below.)
+- **Zitadel deployment risk (h2c):** Zitadel uses HTTP/2 for gRPC; a TLS-terminating proxy must forward **h2c**. Render-edge h2c support is UNCONFIRMED → Task 1 must spike this; fallback = a self-managed proxy sidecar (Caddy/nginx h2c) or a different host. Config: `ZITADEL_MASTERKEY` (exactly 32 chars, immutable), `ExternalDomain=id.fleetworks.dev`, `ExternalSecure=true`, TLS mode external/disabled, Postgres via DSN; bootstrap via `FirstInstance` env; SES SMTP via `POST /admin/v1/email/smtp`.
+
 ## Phase 2 decomposition (context; only #1 is in scope here)
 
 1. **Hub foundation + 1 pilot federation (THIS SPEC)** — deploy Zitadel; wire yellow-pages
@@ -37,7 +45,7 @@ central org/role modeling; ops/security burden of self-hosting accepted.
 
 **Goals**
 - Stand up Zitadel self-hosted on Render at `id.fleetworks.dev`, SES-backed email, as the Fleetworks IdP.
-- A custom, branded login/signup UI on apex at `account.fleetworks.dev`, built against Zitadel's Session API (apex relays credentials; Zitadel owns password hashing/MFA/policy — apex stores no passwords). This one hub UI is the login surface for **all** client surfaces (opened in the system browser on native).
+- The custom, branded hub login/signup UI at `account.fleetworks.dev` = a **fork of Zitadel's first-party Login v2 (Next.js, MIT)**, re-themed with Fleetworks branding (gold Boxes mark/colors) and self-hosted (its own Render service, or under the apex domain). It already implements the Session-API login/signup/verify/reset/MFA flows against Zitadel; we own + brand it but don't rebuild the flows. This one hub UI is the login surface for **all** client surfaces (opened in the system browser on native). [DECIDED 2026-07-30]
 - yellow-pages gains a "Sign in with Fleetworks" (generic-OIDC) option next to its existing password login, on **both its web and its mobile (Expo) surface**. Password login untouched on both.
 - Auto-link a federated identity to an existing yp account by **verified** email; provision a new yp user otherwise. Because web + mobile + desktop share ONE yp Supabase project, linking is per-Supabase-user and identical regardless of which client initiated it.
 - Prove the full round-trip e2e on yellow-pages, **web and mobile**.
