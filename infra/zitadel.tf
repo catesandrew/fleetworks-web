@@ -64,6 +64,54 @@ resource "zitadel_application_oidc" "yellow_pages" {
   dev_mode = false
 }
 
+
+# The remaining product apps. Each Supabase project is its own relying party so
+# a leaked client secret is scoped to one product; all of them sit in the same
+# Zitadel project so instance branding and (later) project roles apply
+# uniformly. Adding an app is this resource plus a syncCustomOidcProvider run.
+locals {
+  fleetworks_apps = {
+    helmsman = { name = "Helmsman (Supabase)", ref = var.helmsman_supabase_ref, site = "https://helmsman.fleetworks.dev" }
+    rolodex  = { name = "Rolodex (Supabase)", ref = var.rolodex_supabase_ref, site = "https://rolodex.fleetworks.dev" }
+    warden   = { name = "Warden (Supabase)", ref = var.warden_supabase_ref, site = "https://warden.fleetworks.dev" }
+    chorus   = { name = "Chorus (Supabase)", ref = var.chorus_supabase_ref, site = "https://chorus.fleetworks.dev" }
+  }
+}
+
+resource "zitadel_application_oidc" "app" {
+  for_each = local.fleetworks_apps
+
+  org_id     = var.zitadel_org_id
+  project_id = zitadel_project.fleetworks_suite.id
+  name       = each.value.name
+
+  redirect_uris             = ["https://${each.value.ref}.supabase.co/auth/v1/callback"]
+  post_logout_redirect_uris = ["${each.value.site}/"]
+
+  response_types = ["OIDC_RESPONSE_TYPE_CODE"]
+  grant_types    = ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"]
+  app_type       = "OIDC_APP_TYPE_WEB"
+
+  auth_method_type  = "OIDC_AUTH_METHOD_TYPE_BASIC"
+  access_token_type = "OIDC_TOKEN_TYPE_BEARER"
+
+  # Supabase reads email + email_verified from the ID token to decide linking.
+  id_token_userinfo_assertion = true
+  dev_mode                    = false
+}
+
+output "app_oidc_client_ids" {
+  description = "Per-app OIDC client_id, keyed by app slug — consumed by each project's Supabase custom provider."
+  value       = { for k, v in zitadel_application_oidc.app : k => v.client_id }
+  sensitive   = true
+}
+
+output "app_oidc_client_secrets" {
+  description = "Per-app OIDC client_secret, keyed by app slug."
+  value       = { for k, v in zitadel_application_oidc.app : k => v.client_secret }
+  sensitive   = true
+}
+
 # ── Transactional email via the hub's own SES identity ───────────────────────
 # Credentials come straight from this root's IAM resources (iam.tf) — no manual
 # copy/paste of an SMTP password, and rotation is `terraform apply`.

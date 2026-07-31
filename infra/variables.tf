@@ -36,6 +36,26 @@ variable "yellow_pages_supabase_ref" {
   type        = string
 }
 
+variable "helmsman_supabase_ref" {
+  description = "Supabase project ref for helmsman."
+  type        = string
+}
+
+variable "rolodex_supabase_ref" {
+  description = "Supabase project ref for rolodex."
+  type        = string
+}
+
+variable "warden_supabase_ref" {
+  description = "Supabase project ref for warden."
+  type        = string
+}
+
+variable "chorus_supabase_ref" {
+  description = "Supabase project ref for chorus."
+  type        = string
+}
+
 variable "domains" {
   description = <<-EOT
     SES/DNS domain map for the auth hub, keyed by the From/identity domain
