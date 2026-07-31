@@ -469,8 +469,29 @@ Modifies the **live** auth path of four production apps (§1.1) using plugins wi
 
 1. Bindings screen in rolodex: group → app → role → preview → confirm.
 2. **Deprovisioning as a distinct deliverable**: session/refresh revocation, not
-   just role removal (§3). Add role gates to `routes/ldap.ts`.
-3. Migrate existing yellow-pages admins and `groups` values: backfill directory
+   just role removal (§3).
+3. **Gate `routes/ldap.ts`.** Confirmed 2026-07-31: **no external PAT holder
+   consumes `/api/ldap-sync-cache/*`** — the surface is too new. Every consumer
+   is in-repo and on a Supabase JWT (web dashboard, mobile app,
+   `scripts/smoke-authed.mjs`), so gating breaks nothing external. But it must
+   happen in this order, or the gate is theatre:
+   1. **Validate `service_accounts.role` against `VALID_ROLES`.**
+      `service-accounts.ts:49` takes `role: z.string().optional()` into a plain
+      text column, and `middleware.ts:107` casts it through as
+      `roles: [sa.role as AuthRole]`, bypassing the `org:viewer` floor entirely.
+      Any role gate is meaningless while PAT roles are caller-chosen strings.
+   2. **Make `requireRole` hierarchy-aware** (or add `requireMinimumRole`).
+      It is a flat exact-match (`role-guard.ts:12`) and resolution never expands
+      downward, so `requireRole('org:contributor')` **403s an `org:admin`** whose
+      principal is literally `['org:admin']`.
+   3. Then gate at contributor-or-above.
+
+   Related, and a prerequisite for (2): `apps/web/src/hooks/use-roles.ts:8-13`
+   already implements a *ranked* `hasMinimumRole` while the API is flat — so UI
+   and API authorization can silently diverge — and in that ranking **`ci:agent`
+   (4) outranks `org:admin` (3)**, meaning the default service-account role is
+   treated as super-admin by every UI check. Reconcile the two rankings.
+4. Migrate existing yellow-pages admins and `groups` values: backfill directory
    groups and bindings **before** retiring the manual path, never after.
 
 ---
