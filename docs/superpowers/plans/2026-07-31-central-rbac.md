@@ -405,21 +405,31 @@ not a config value.
    rate-limit cost. Under `enforcement: 'full'`, a short-but-successful
    `fetchActual` revokes everyone it omitted — so this needs a pagination fixture
    test before it runs anywhere near production.
-4. `applyGrant` merges the namespaced subtree; never replaces `raw_app_meta_data`.
-   **Verify against a live project first, not from docs.** The writer needs the
-   Supabase **Admin** API (`PUT /auth/v1/admin/users/{id}`) — a different surface
-   from the Management API that `@cogs/supabase-sync` wraps, so it does not
-   extend that client and needs a new one. `@cogs/supabase-sync` touches no user
-   rows at all (zero hits for `app_metadata` / `raw_app_meta_data` /
-   `updateUserById` across its `src/`); it configures projects, and Supabase
-   populates `app_metadata.provider` itself at sign-in. So whether that endpoint
-   shallow-merges `app_metadata` or replaces it outright is **unverified**, and
-   the contract's §1 guarantee depends on the answer: if it merges, the platform
-   gives us "subtree replaced, `provider`/`providers` untouched" for free; if it
-   replaces, the writer must read-modify-write and that guarantee becomes the
-   writer's responsibility — with a concurrency hazard the plan's in-flight guard
-   (2.7) does not cover, because it would then be a cross-process read-write race
-   against yellow-pages' `/admin/users`.
+4. `applyGrant` writes **only** the `fleetworks` subtree via the Supabase
+   **Admin** API (`PUT /auth/v1/admin/users/{id}`). Note this is a different
+   surface from the Management API that `@cogs/supabase-sync` wraps — that
+   package touches no user rows at all (zero hits for `app_metadata` /
+   `raw_app_meta_data` / `updateUserById` across its `src/`), so the writer needs
+   its own client rather than an extension of that one.
+
+   **MEASURED 2026-07-31 against GoTrue v2.192.0** (local stack, throwaway user,
+   created and deleted). The semantics are exactly what the contract §1 assumed:
+
+   | level | behaviour | consequence |
+   |---|---|---|
+   | `app_metadata` top level | **shallow-merged** | sending only `fleetworks` left `provider`, `providers` and an unrelated `legacy_role` intact |
+   | the `fleetworks` subtree | **replaced wholesale** | a second write omitting `syncedAt` dropped it; `roles: []` genuinely emptied |
+
+   So **no read-modify-write is needed**, and the cross-process race against
+   yellow-pages' `/admin/users` does **not** materialise — the two writers own
+   different top-level keys and the merge is per-top-level-key. Subtree
+   replacement is also what makes revocation work at all: a deep merge would have
+   made `roles: []` a no-op.
+
+   **Caveat:** measured on local GoTrue v2.192.0, not against a hosted project.
+   Re-confirm on one hosted project before the loop goes live, and pin the
+   assumption in a test — if a future GoTrue ever deep-merged, revocation would
+   silently stop working with no error anywhere.
 5. Set `enforcement` explicitly per target and justify it. `additive` never
    revokes; `full` gives `revokeGrant` its first production exercise. Stage it:
    `report_only` → `additive` → `full`, one target at a time.
