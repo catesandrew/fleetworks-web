@@ -1,248 +1,433 @@
 # Central RBAC — sub-project 4
 
-**Status:** plan, not executed. Written 2026-07-31 after reading the five repos'
-authorization code, `@cogs/auth`, and rolodex's directory + access schema.
+**Status:** plan, not executed. Written 2026-07-31; **§1 and Phase 2 rewritten
+the same day** after an architect + critic review rejected the first draft.
 
 Prereqs done: Phase 1 auth (per-app Supabase), Phase 2 sub-projects 1 & 2 (the
 Zitadel hub + "Sign in with Fleetworks" on all five apps). See
 `2026-07-30-fleetworks-auth-hub-pilot.md`.
 
+> **Why this was rewritten.** The first draft's §1 was titled "measured, not
+> assumed" and contained roughly eight claims contradicted by the source it
+> cited — including the identity join, the state of the enforcement plane, and
+> the existence of the read path Phase 1 proposed to build. Every claim in the
+> new §1 carries a `file:line`, and §1.6 lists what remains **unverified**. Do
+> not size any phase off a claim that isn't in §1.1–§1.5.
+
 ---
 
-## 1. What exists today (measured, not assumed)
+## 1. What exists today
 
-### 1.1 Two incompatible authorization models
+Every statement below was read in source. Line numbers are as of 2026-07-31.
 
-| | yellow-pages | helmsman / rolodex / warden / chorus |
+### 1.1 Two authorization models, and neither is what the first draft described
+
+**yellow-pages** — `apps/api/src/auth/middleware.ts:91-99`:
+
+```ts
+const raw = app.groups ?? p.groups ?? app.teams ?? []
+const role = (app.role ?? p.role) as string | undefined
+const isAdmin = role === 'admin' || app.is_admin === true || p.is_admin === true
+```
+
+- Reads `app_metadata.groups`, `groups`, `app_metadata.teams`. **`roles` is read
+  nowhere in yellow-pages** — `app_metadata.roles` greps to zero hits across
+  `apps/` and `packages/`.
+- Write gate, `apps/api/src/auth/write-guard.ts:35` — `if (user.isAdmin || user.groups.length > 0)`.
+  **A non-empty `groups` array IS the write grant.** Safe today only because
+  nothing populates it.
+- API-key callers short-circuit **before** the group check, `write-guard.ts:25-28`;
+  their `groups` come from `api_keys.owner_group` (`middleware.ts:76-83`). This
+  is a second authorization path with no `AuthRole` equivalent.
+- No org concept at all — `packages/core/src/rbac.ts:37-42`.
+
+**helmsman, rolodex, warden, chorus** — all four already resolve roles through
+the `@cogs/auth` plugin engine on **every request today**:
+
+| repo | import site | plugin set |
 |---|---|---|
-| Principal shape | `{ isAdmin: boolean, groups: string[] }` | `AuthRole[]` |
-| Source | Supabase `app_metadata.role` / `.groups` | `org_members.role` column |
-| Vocabulary | free-form group strings + an admin bit | `org:admin` \| `org:contributor` \| `org:viewer` \| `ci:agent` |
-| Default | no groups ⇒ `requireWriteAccess` 403s | `.default('org:viewer')` |
-| Where enforced | `apps/api/src/auth/middleware.ts` + `write-guard.ts` | per-app middleware |
+| rolodex | `apps/api/src/auth/middleware.ts:3-9` | `:60-70` |
+| helmsman | `apps/api/src/auth/middleware.ts:5-9` | `:55-60` |
+| warden | `apps/api/src/auth/middleware.ts:5-9` | `:70-75` |
+| chorus | `apps/api/src/auth/middleware.ts:5-9` | `:55-60` |
 
-Both now *verify* tokens through `@cogs/auth`'s `verifyToken`. Neither uses its
-role machinery.
+Each constructs `new IdpTokenPlugin()` + `new DatabasePlugin(dbRoleLookup)` and
+calls `resolveRolesFromPlugins`. **So their role source is `IdpToken ∪ org_members`,
+not `org_members` alone**, and Phase 3 is not greenfield wiring — it modifies the
+live auth path of four production apps.
 
-### 1.2 `@cogs/auth` already has the whole resolution engine — unused
+`org_members.role` is a **single `text` column**, unique per (org, user), in all
+four — so there is no representable *local deny*, only a single granted role.
 
-`packages/auth/src/plugins/`:
+### 1.2 `@cogs/auth` — in production, and three behaviours differ from its docs
 
-- `RoleProviderPlugin` — `resolve(ctx) => Promise<string[]>` of **raw external
-  group strings**. Mapping to internal roles happens later, deliberately.
-- Implementations: `IdpTokenPlugin` (on by default), `DatabasePlugin` (on when a
-  `DbLookupFn` is injected), `UserinfoPlugin`, `SupabasePlugin`, `LdapPlugin` —
-  the last three opt-in.
-- `LdapPlugin` takes an injected `LdapClient { fetchGroups(userId): Promise<string[]> }`.
-  The package has **no `ldapjs` dependency** — the consumer supplies the client.
-  That injection point is the seam this whole plan hangs on.
-- `resolveRolesFromPlugins(plugins, ctx, mapper)` — runs plugins in parallel,
-  unions groups, maps, floors at `org:viewer`.
-- `RoleMappingService` — glob (`*`) matching from external group ⇒ `AuthRole`.
-  Rules come from `ROLE_MAP_*` env **and** an optional injected
-  `DbMappingLoader(orgId)`; DB rules take precedence over env rules. Any group
-  string that is already a valid `AuthRole` passes straight through.
+- `resolveRolesFromPlugins` runs plugins in parallel, unions, maps, floors —
+  `plugins/orchestrator.ts:33-38`. The floor is **fail-open**: no resolvable
+  role yields `[DEFAULT_ROLE]` = `org:viewer` (`types.ts:26`).
+- **Mapping is a union, not a precedence.** `mapping.ts:68-83` does
+  `rules = [...dbRules, ...this.envRules]` and evaluates every rule into a `Set`.
+  The file's own docstring says "DB rules take precedence over env rules" — the
+  docstring is wrong. Any design that relies on a DB rule *overriding* an env
+  rule is relying on behaviour that does not exist.
+- **Env var names are `ROLE_MAP_ADMIN` / `_CONTRIBUTOR` / `_VIEWER` / `_CI_AGENT`**
+  (`config.ts:96-99`), not `ROLE_MAP_ORG_*`. Values are **comma-split**
+  (`config.ts:63-69`), so an LDAP DN — which always contains commas — **cannot be
+  expressed in this format at all**, and a trailing comma yields a `*` pattern
+  that `globMatch` (`mapping.ts:27`) matches against everything.
+- **`AuthRole` passthrough:** `mapping.ts:63-66` — any external group string that
+  is literally `org:admin` becomes `org:admin` with no rule configured.
+- **Objects degrade to their keys.** `claim-utils.ts:26-28` —
+  `extractStrings` returns `Object.keys(value)` for any object (a deliberate
+  Zitadel-shape accommodation). Combined with the passthrough above, a claim
+  shaped `{"org:admin": false}` grants `org:admin`. The value is never read.
+- **`SupabasePlugin` reads `app_metadata.roles` by default** (`supabase.ts:23`)
+  and is explicitly documented to read **only** server-writable paths, "never
+  from `user_metadata`, which end users can edit" (`supabase.ts:4-5`). A
+  namespaced key therefore requires passing `supabaseRoleClaim` in **every**
+  consuming app — miss one and it silently resolves to `org:viewer`.
+- It also ignores `ctx.orgId` entirely (`supabase.ts:26`), so a pushed role is
+  not tenant-bound.
+- `LdapPlugin` takes an injected `LdapClient`, no `ldapjs` dependency
+  (`plugins/ldap.ts:10-12`), and swallows errors to `[]` (`:22-28`).
+- **Test coverage is thin where it matters.** `packages/auth/test/` holds
+  `mapping`, `orchestrator`, `roles`, `verify`, `impersonation`. There are **no
+  tests for `LdapPlugin`, `SupabasePlugin`, `UserinfoPlugin`, `IdpTokenPlugin`,
+  `DatabasePlugin`, or `claim-utils`** — and the orchestrator tests use fake
+  plugins.
 
-So the enforcement plane is written and tested. Nothing calls it.
+### 1.3 Rolodex's access engine is real, and works differently than assumed
 
-### 1.3 Rolodex already *is* the directory and the provisioning engine
+`apps/api/src/access/reconcile.ts` is ~391 lines of working desired-vs-actual
+diff with run rows, preview gating, enforcement levels, protected principals and
+per-target failure isolation. Three connectors ship with tests (`github-`,
+`gitlab-`, `azure-devops-connector`). It is not scaffolding.
 
-Rolodex's CLAUDE.md calls it an "LDAP Sync Cache … read-only access to Active
-Directory and Workday user/group data". The schema goes further than that:
+**It does not join on email.** `reconcile.ts:84-89`:
 
-**Directory (sync'd from AD + Workday via `sync_sources` / `sync_runs`):**
+```ts
+const identity = await db.query.userExternalIdentities.findFirst({
+  where: and(
+    eq(userExternalIdentities.userId, member.userId),
+    eq(userExternalIdentities.provider, target.provider),
+  ),
+})
+```
 
-- `directory_users` — 40+ columns incl. `mail`, `work_email`,
-  `sam_account_name`, `dss_username`, `distinguished_name`, `object_guid`,
-  `employee_number`, `manager`, `cost_center_unique_id`, `is_service_account`,
-  and `yellowpages_service_id` (it already cross-links to yellow-pages).
-- `directory_groups` — `name`, `distinguished_name`, `category`, `managed_by`,
-  `owner_user_id` / `owner_group_id` / `owner_object_class`, plus its own
-  `yellowpages_service_id`.
-- `group_members` — `group_id` × `user_id`.
+- A member with no matching row is counted `skipped_unmapped` and **never enters
+  the diff** (`:92-104`). Email appears nowhere in `runReconcile`.
+- `user_external_identities` is **`UNIQUE (user_id, provider)`**
+  (`0003_careful_madame_hydra.sql:78`), so one row cannot represent the same
+  person across five Supabase projects that each assign a different `auth.users.id`.
+- The only population path is a manual CSV import keyed
+  `sAMAccountName,provider,external_login` — `routes/access.ts:707,728-839`.
 
-**Access provisioning (migration `0003_careful_madame_hydra.sql`):**
+**Revocation is off by default.** `0004_thin_cerise.sql:2` —
+`enforcement text DEFAULT 'additive' NOT NULL`; `reconcile.ts:33-35` coerces
+anything unrecognised to `additive`; `:264-278` writes `revoke_reported,
+applied: false` and **never calls `revokeGrant`**. Under the shipped default a
+removed grant persists indefinitely. Because the diff key is
+`principal|target|role` (`:148-152`), a *downgrade* emits grant(new) +
+revoke(old) — so under `additive` the user keeps **both** roles.
 
-- `access_targets` — `provider`, `name`, `config`, `secret_enc`, `active`,
-  `last_run_at`, `last_status`. A downstream system to provision into.
-- `access_bindings` — `rolodex_group_id` → (`target_id`, `external_target`,
-  `role`), with `previewed`, `created_by`, `confirmed_by`, `confirmed_at`.
-  **This is already a group→role mapping table with two-phase approval.**
-- `access_changes` — per-run ledger: `disposition`, `external_principal`,
-  `external_target`, `role`, `applied`, `detail`.
-- `user_external_identities` — `user_id` × `provider` × `external_login`.
+**A clean run is not a silent run.** `reconcile.ts:164-172` writes a
+`noop_already_granted` row for every already-correct grant, every run.
 
-**API surface already shipped:** `/api/access/targets`,
-`/api/access/targets/{id}/reconcile`, `/api/access/targets/{id}/runs`,
-`/api/access/bindings`, `/api/access/bindings/{id}/confirm`,
-`/api/access/identities/import`, plus `/internal/access/reconcile`.
+**The reverse lookups the first draft proposed to build already exist:**
 
-The central RBAC control plane does not need to be invented. It needs one new
-`provider` value and one missing read path.
+- `routes/ldap.ts:136-144` `getMemberOfGroups(userId)` — the members→groups
+  direction, already consumed by `/user/{username}` and every `/user-by-*` route.
+- `routes/ldap.ts:409-427` `/search/users/{value}` already does
+  `ilike(directoryUsers.mail, '%value%')` and returns each user **with groups**.
+- The real defect is narrower: that matcher is a **substring** match on `mail`
+  **only** — `work_email` is not searched, and `a@x.com` matches `maria@x.com`.
+  Correct for a search box, disqualifying for an identity join.
 
-### 1.4 The gaps
+**Binding routes are unscoped and self-confirmable.** `getCallerOrg` guards all
+seven target routes (`access.ts:88,142,183,238,293,321,356`) and **none** of the
+six binding routes (`:426,476,514,567,638,667`). `GET /bindings` (`:477`) has no
+`WHERE` clause. `POST /bindings/{id}/confirm` (`:667-704`) sets
+`confirmedBy: user.id` with no check against `createdBy`, and `role` is an
+unvalidated `z.string()` (`:393`). **The "two-phase approval" is one principal
+calling two endpoints.**
 
-1. **No reverse lookup.** `/api/ldap-sync-cache/group/{name}` is group→members.
-   There is no members→groups and no `user-by-email`. Every lookup key
-   (`objectGUID`, `employee-number`, `dss-username`, `distinguishedname`,
-   `yellowpages-service-id`) is an *enterprise* key. The hub asserts an **email**.
-2. **Zitadel is deliberately not the role store.** `infra/zitadel.tf` sets
-   `project_role_assertion = false` and declares no `zitadel_project_role` /
-   `_grant` resources. Correct — keep it authentication-only.
-3. **Federated claims land in the wrong bag.** Supabase writes IdP claims to
-   `user_metadata`; yp's `claimsToRbac` reads `app_metadata`. For hub-sourced
-   users it reads an empty object, which is why every federated sign-in lands as
-   "no groups" and gets 403'd by `requireWriteAccess`.
-4. **`hook_custom_access_token_enabled = false`** on yp. The claim-injection
-   seam exists and is switched off.
+**Approval covers the edge, never the membership.** `previewed` resets on a
+role/`external_target` PATCH (`:578-592`) and on an external-login change during
+import (`:794-829`) — but **not** on a change to `group_members`, which
+`reconcile.ts:77-81` re-expands ungated on every run.
+
+**Other load-bearing facts:**
+
+- `provider` is a closed set: zod enum `access.ts:43`, a literal union on the
+  connector interface `connector.ts:29`, and a registry `connector.ts:62-66`.
+  Adding `'fleetworks'` is three type-level changes plus a connector.
+- `fetchActual` is complete-or-throw; partial results are forbidden
+  (`connector.ts:31-40`) and a throw fails the whole target run
+  (`reconcile.ts:128-144`).
+- `access_changes` rows are written in **one batch at the end**
+  (`reconcile.ts:316-329`) while `applyGrant` calls happen one-by-one
+  (`:209-236`). A crash mid-run leaves external writes with **no ledger rows**.
+- An `applyGrant` failure is recorded but does **not** set `driftDetected`
+  (`:225-236`) — a run where every grant failed reports
+  `status: 'success', driftDetected: false`.
+- `sealSecret()` is `encryptSecret(plaintext) ?? plaintext`
+  (`sync/crypto.ts:66-67`); `getKek()` returns null when `SYNC_SECRET_KEK` is
+  unset (`:10-12`). **With no KEK, secrets are stored in plaintext** — while the
+  file's own header comment (line 3) claims the opposite.
+- **Zero `requireRole` in `routes/ldap.ts`.** The entire HR directory sits behind
+  authentication only.
+- `getFirstOrgForUser` (`db.ts:6-11`) is a `findFirst` with no `ORDER BY` — a
+  multi-org user's resolved org is whatever Postgres returns first.
+
+### 1.4 Zitadel is authentication-only — confirmed
+
+`infra/zitadel.tf:28` — `project_role_assertion = false`, `project_role_check =
+false`, and no `zitadel_project_role` / `_grant` resources anywhere. Keep it that
+way.
+
+### 1.5 Supabase claim shape — and why the obvious fix is an escalation
+
+Supabase writes federated IdP claims to `user_metadata`, not `app_metadata` —
+which is why hub-sourced yellow-pages users arrive with empty `groups` and are
+refused by `write-guard.ts`.
+
+**Reading `user_metadata` is not the fix.** End users can edit their own
+`user_metadata` through the Supabase client; `@cogs/auth` refuses it for exactly
+that reason (`plugins/supabase.ts:4-5`). Any code path that treats it as an
+authorization source lets a user self-assert their own roles. The fix is for a
+**server-side** path — the reconcile loop, or a `before_user_created` /
+`custom_access_token` hook — to copy verified identity into `app_metadata`.
+
+### 1.6 The directory sync populates less than the schema suggests
+
+`directory_users` has 40+ columns, but the sync model cannot fill most of them:
+
+- `MappedUser` (`apps/api/src/sync/source.ts:6-`) has **no `workEmail` and no
+  `isServiceAccount`**. Grepping `workEmail|work_email|isServiceAccount` across
+  `apps/api/src/sync/` returns **nothing**.
+- So **`work_email` is a dead column** — never written by any sync source. Any
+  join that reads `mail OR work_email` is really joining on `mail` alone.
+- **`is_service_account` is likewise never populated by sync.**
+- Departures are marked `workerStatus = 'Inactive'` (`sync/run.ts:255`), not
+  deleted. A stale inactive row with a live mailbox is still joinable unless the
+  join explicitly rejects it.
+
+### 1.7 NOT verified — do not size off these
+
+- **`hook_custom_access_token_enabled`** — asserted as `false` in the first
+  draft. Not found in any `*.tf` or `*.toml` in the tree. **Unconfirmed.**
+- **Actual Supabase JWT/refresh TTL** on the five projects — not in any repo;
+  it is dashboard/Management-API state. The first draft's "1h + JWT TTL" used a
+  number nobody has measured.
+- Supabase Admin API `listUsers` pagination cost and rate limits.
+- Whether any non-sync path (admin UI, manual SQL) populates `work_email` or
+  `is_service_account`. §1.6 establishes only that the **sync** never does.
+- Runtime behaviour of anything above. All static reading; no tests were run.
 
 ---
 
 ## 2. Design
 
 **Rolodex is the RBAC control plane. `@cogs/auth` is the enforcement plane.
-Supabase is the transport. Zitadel stays authentication-only.**
+Zitadel stays authentication-only.**
 
-The identity join is **verified email → `directory_users.mail` / `.work_email`**.
-That works precisely because the hub refuses to authenticate an unverified-email
-user at all (proven in sub-project 1), so a verified email off a Fleetworks token
-is a trustworthy directory key.
+The first draft called Supabase "the transport." It is not. `app_metadata` is a
+**durable, mutable, multi-writer role store**, and naming it transport is what
+licensed skipping ownership, versioning and staleness. Corrected:
 
-Delivery is **push-primary, pull-optional**:
+> **`app_metadata.<key>` is a rolodex-owned, replicated role cache.**
 
-- **Push (primary).** A Fleetworks app becomes an `access_target` with
-  `provider = 'fleetworks'`. The existing reconcile loop resolves each binding's
-  group to its members, maps them to `AuthRole`s, and writes
-  `app_metadata.roles` on that app's Supabase project via the admin API. Every
-  write lands in `access_changes`. This reuses the preview/confirm approval and
-  the audit ledger unchanged, adds **zero** login-path latency, and creates no
-  runtime dependency on rolodex being reachable during sign-in.
-- **Pull (opt-in, per app).** `LdapPlugin` with a rolodex-backed `LdapClient`,
-  for apps that need same-request freshness. Fails closed to `org:viewer` on
-  rolodex being down — the plugin already swallows errors and returns `[]`.
+That forces four things the first draft left implicit, and they are now
+deliverables rather than assumptions:
 
-Push is primary because revocation lag is bounded by JWT TTL plus reconcile
-period, both tunable, whereas pull puts rolodex in the critical path of every
-request in the fleet. Ship push; add pull only where a concrete requirement
-demands it.
+1. **A namespaced key** so rolodex owns exactly one subtree and the diff ignores
+   everything else. Without it, `enforcement: 'full'` would strip legitimate
+   non-directory grants.
+2. **A `syncedAt` stamp and a `source`**, so staleness is detectable at the
+   enforcement point. A stale claim must not be byte-identical to a fresh one.
+3. **A declared sole writer**, so break-glass lives somewhere that the reconcile
+   loop will not fight.
+4. **An explicit `enforcement` level per target**, chosen and justified.
 
----
-
-## 3. Phases
-
-### Phase 0 — unify the vocabulary (blocking prerequisite)
-
-yp cannot consume `AuthRole` while its guard reads `isAdmin`/`groups`.
-
-1. In yp, derive `AuthRole[]` alongside the legacy shape: `org:admin` ⇒
-   `isAdmin: true`; any `org:contributor` ⇒ write access. Keep `groups` as the
-   raw external strings for display.
-2. Read from **both** `app_metadata` and `user_metadata` (app_metadata wins) so
-   federated users stop landing role-less. Regression test for the hub-sourced
-   shape specifically.
-3. Leave `requireWriteAccess`'s default-deny intact — `org:viewer` is a read
-   role, and that is the same policy under a new name.
-
-**Verify:** a federated yp sign-in with no directory groups still 403s on write;
-one with a contributor binding 200s. Same evidence shape as the write-hole fix.
-
-### Phase 1 — rolodex reverse lookup
-
-1. `GET /api/ldap-sync-cache/user-by-email/{email}` — matches `mail` **or**
-   `work_email`, case-insensitively. Index both.
-2. `GET /api/ldap-sync-cache/user/{id}/groups` — the members→groups direction,
-   returning group `name` + `distinguished_name`.
-3. Decide the collision policy up front: two `directory_users` rows sharing an
-   email must **fail closed** (return none), never pick one arbitrarily.
-
-**Verify:** contract tests in `openapi-contract.test.ts`; a fixture with a
-duplicate-email pair asserting the fail-closed branch.
-
-### Phase 2 — the `fleetworks` access provider
-
-1. Add `provider = 'fleetworks'` to `access_targets`. `config` carries the
-   Supabase project ref and the app slug; `secret_enc` carries that project's
-   secret key (same key class `register-fleetworks-provider.mjs` already
-   reveals via the Management API).
-2. Seed one target per app: yellow-pages, helmsman, rolodex, warden, chorus —
-   all owned by the single `fleetworks` platform org (§4).
-3. `access_bindings.role` for these targets is constrained to the `AuthRole`
-   vocabulary. Bindings stay group-scoped — never per-user. Service-account
-   rows are eligible for `ci:agent` only via an explicitly confirmed binding.
-4. Reconcile: for each active binding, expand `group_members` → `directory_users`
-   → email → that project's `auth.users` row; compute the union of roles; write
-   `app_metadata.roles`. **Merge, never replace** `raw_app_meta_data` — the
-   `provider`/`providers` keys must survive (the same bug already fixed once in
-   yp's `admin-users.ts`).
-5. Write every add/remove/no-op to `access_changes` with `applied`.
-6. Trigger on `sync_run` completion plus an hourly floor (§4). A clean hourly
-   pass must write zero `access_changes` rows.
-
-**Verify:** dry-run (`previewed`) against a real project produces the expected
-`access_changes` rows and writes nothing. Then confirm one binding and assert the
-`app_metadata` delta plus intact `providers`.
-
-### Phase 3 — enforcement through `@cogs/auth`
-
-1. Each app builds its provider set with `createRoleProviders({ supabase: true },
-   { dbLookup })` — `SupabasePlugin` reads the pushed `app_metadata`,
-   `DatabasePlugin` keeps `org_members` as the local override.
-2. `RoleMappingService` gets a `DbMappingLoader` so per-org rules can come from
-   the DB later; until then `ROLE_MAP_*` env carries the static globs (e.g.
-   `ROLE_MAP_ORG_ADMIN=CN=Fleetworks-Admins,*`).
-3. Precedence, stated explicitly and tested: local `org_members` grant ∪
-   directory-derived roles, floored at `org:viewer`. Union, not override —
-   a directory outage must not strip a locally-granted admin.
-
-**Verify:** per-app middleware tests asserting each precedence branch, including
-directory-down.
-
-### Phase 4 — UI and break-glass
-
-1. Rolodex gains a bindings screen: pick group → pick app → pick role → preview →
-   confirm. This is the "adjust groups in UI, tied to rolodex" the user asked for,
-   and it lands on the API that already exists.
-2. **Break-glass stays out of the directory.** Platform staff ("god mode") is
-   resolved server-side per `@cogs/auth`'s own note that such authority is
-   "resolved out-of-band and never encoded as a JWT-derived `AuthRole`". yp's
-   `/admin/users` remains the manual path; keep its no-self-demotion guardrail.
-3. Retire yp's direct `app_metadata.groups` editing once Phase 2 owns that field,
-   or the reconcile loop will fight the admin UI. Until then, `groups` stay
-   read-only in the UI exactly as they are now.
+Delivery stays **push-primary** — reconcile writes the claim; no rolodex
+dependency in the login path. That choice survived review. What did not survive
+is the belief that push is *safe by default*: its failure mode is silent
+(§1.3, `driftDetected` hole + `last_status` nobody watches), so observability is
+part of Phase 2, not a later nicety.
 
 ---
 
-## 4. Decisions (settled 2026-07-31)
+## 3. Threat notes carried into the phases
 
-- **Reconcile cadence: on `sync_run` completion, plus an hourly floor.** The
-  event edge propagates a real HR change within minutes; the hourly sweep exists
-  so a failed or silently-stalled sync source cannot freeze grants indefinitely.
-  Worst-case revocation lag = 1h + JWT TTL. Both are tunable; neither is
-  unbounded. The hourly run must be a no-op when nothing changed — assert that
-  it writes zero `access_changes` rows on a clean pass.
-- **Tenancy: one platform org owns all five targets.** A single `fleetworks` org
-  row in rolodex. There is exactly one directory, one admin group, and one audit
-  trail today, and yp has no org concept at all — inventing five tenants would
-  fabricate an axis that does not exist and split `access_changes` five ways.
-  `org_id` stays a real tenant boundary for when multi-tenancy actually arrives.
-- **Service accounts: eligible, never automatic.** A `directory_users` row with
-  `is_service_account` may receive `ci:agent`, but only through an ordinary
-  `access_binding` that someone previewed and confirmed. No implicit grant off
-  the flag. Machine authority across five apps is exactly the case the two-phase
-  approval exists for. `service_account_environment` is advisory metadata shown
-  in the bindings UI, not an input to the grant.
-- **`custom_access_token` hook stays OFF.** Push-only delivery. Rolodex is
-  deliberately absent from the login path: if it is down, people still sign in
-  with their last-known roles rather than being locked out fleet-wide. Revisit
-  only if measured push-staleness proves unacceptable — and if so, pilot on yp
-  alone with an explicit test for the hook-errors-block-sign-in failure mode.
+- **Recycled email address.** `mail`/`work_email` are nullable with **no unique
+  index** (`0000_uneven_toad.sql:30-31`; uniques exist only on
+  `sam_account_name`, `dss_username`, `distinguished_name`, `object_guid` at
+  `:140-143`). A departed employee's address reissued to a new hire inherits
+  their groups. No attacker required — and a unique index would not prevent it,
+  because reassignment is sequential, not concurrent. Only a stable enterprise
+  identifier plus an explicit link lifecycle does.
+- **Verified ≠ trustworthy row.** Email verification proves mailbox control. It
+  says nothing about whether the `directory_users` row keyed to that address is
+  trustworthy — that row is written by an AD/Workday sync outside this plan's
+  trust boundary.
+- **Secret custody.** A Supabase project secret key is `service_role`: full RLS
+  bypass plus `auth.admin` on that project. Five of them in one table makes
+  rolodex's database the single highest-value target in the fleet — and rolodex
+  is itself one of the five.
+- **Deprovisioning ≠ downgrade.** Clearing roles floors a principal at
+  `org:viewer` (fail-open, §1.2), and `routes/ldap.ts` has no role gate — so a
+  terminated employee with a live refresh token still reads the entire HR
+  directory. Session revocation is a **separate deliverable** from role removal.
 
 ---
 
-## 5. Non-goals
+## 4. Phases
+
+### Phase 0 — the claim contract, and the controls Phase 2 stands on
+
+Ordered first because everything downstream parses or writes this claim. The
+previous draft put the parser change before the contract that defines it.
+
+1. **Specify the claim.** Exact path, exact shape (`roles`, `source`, `syncedAt`),
+   sole writer, replacement semantics (the owned role array is **replaced**, not
+   unioned — an array union can never revoke), and a staleness policy. Note that
+   a namespaced path requires `supabaseRoleClaim` in **every** consuming app
+   (§1.2) — enumerate them.
+2. Fix the binding routes **before** a fleetworks provider exists: org-scope all
+   six, reject `confirmedBy === createdBy`, constrain `role` to `AuthRole`.
+3. Tie confirmation to what was previewed — a binding revision or membership
+   version. Today `confirm` just sets `previewed = true` (`access.ts:667`), and
+   toggling `active` deliberately does not reset it (`:594`), so an inactive
+   binding can be confirmed without ever entering a reconcile and then activated.
+4. Treat a `group_members` delta on a bound group as approval-invalidating.
+5. Make `SYNC_SECRET_KEK` mandatory and `sealSecret` fail loudly, before any
+   Supabase key is stored. Decide key custody separately — one application KEK
+   over five `service_role` keys keeps the blast radius whether or not the
+   plaintext bug is fixed.
+6. Decide the join key. `work_email` is a dead column and `mail` has no unique
+   index (§1.6, §1.3); mailbox control is not identity. Prefer a stable
+   enterprise identifier (`object_guid` / `employee_number`) resolved once at
+   link time, and reject `workerStatus = 'Inactive'` rows.
+
+### Phase 1 — unify the vocabulary in yellow-pages
+
+Larger than the first draft implied: it touches `apps/api/src/auth/middleware.ts`,
+`packages/core/src/rbac.ts` (a published workspace package),
+`apps/api/src/auth/write-guard.ts`, `apps/api/src/auth/rbac.ts`,
+`apps/api/src/routes/admin-users.ts`, the API-key principal path, and
+`apps/web/src/lib/can-write.ts`. Budget it as such.
+
+1. Derive `AuthRole[]` from the Phase 0 claim, alongside the legacy shape.
+2. **In the same commit**, remove `groups.length > 0` from `requireWriteAccess`
+   and gate on `org:admin | org:contributor | ci:agent`. Shipping (1) without (2)
+   arms an escalation that detonates in Phase 3.
+3. **Do not read `user_metadata`.** The first two drafts of this plan said to
+   ("app_metadata wins"). That is a self-service privilege escalation — users can
+   edit their own `user_metadata`, and `@cogs/auth` refuses it for that reason
+   (`supabase.ts:4-5`). Hub users get their claim from the server-side path in
+   §1.5, not from a client-writable bag.
+4. Retire or namespace the legacy `app_metadata.role` / `is_admin` admin bit
+   (`admin-users.ts:157`). Left in place, it is a grant the directory cannot
+   revoke, which defeats Phase 3's whole point.
+5. Give the API-key path an explicit `AuthRole` mapping rather than leaving it
+   short-circuited.
+
+**Verify:** three cases, not two — no groups → 403; **groups present but roles =
+`['org:viewer']` → 403** (the case the first draft's matrix omitted); contributor
+→ 200. Plus a case asserting a self-set `user_metadata` role grants nothing. All
+against hand-written fixtures, labelled as parser tests, since nothing writes the
+claim until Phase 2.
+
+### Phase 2 — the `fleetworks` connector
+
+Re-scoped. This is a connector with a principal model no existing connector uses,
+not a config value.
+
+1. Decide and record: **fork `runReconcile`'s member-expansion loop** for an
+   identity-resolving provider, **or** adopt `user_external_identities` and accept
+   a per-employee import. One target per Supabase project, `external_target` = the
+   project ref (restores the dimension the unique index needs). **Do not create a
+   rolodex target until Phase 3.4 has settled self-targeting** — a target created
+   here lets JWT-derived rolodex admins mutate the bindings that manufacture their
+   own authority.
+2. Register the provider: zod enum, connector union, registry (§1.3).
+3. Implement `fetchActual` with real pagination over `auth.users`, and budget its
+   rate-limit cost. Under `enforcement: 'full'`, a short-but-successful
+   `fetchActual` revokes everyone it omitted — so this needs a pagination fixture
+   test before it runs anywhere near production.
+4. `applyGrant` merges the namespaced subtree; never replaces `raw_app_meta_data`.
+5. Set `enforcement` explicitly per target and justify it. `additive` never
+   revokes; `full` gives `revokeGrant` its first production exercise. Stage it:
+   `report_only` → `additive` → `full`, one target at a time.
+6. Move `access_changes` writes to accompany each `applyGrant`, so a crash cannot
+   leave external writes unlogged. Set `driftDetected` on apply failure.
+7. Add an in-flight guard (advisory lock or a partial unique index on
+   `status='running'`) before adding the second trigger — §5's `sync_run` + hourly
+   pair can otherwise interleave on one target.
+8. Alert on `last_status='failed'`, on `last_run_at` age, and on `unmappedUsers`
+   climbing. Decide `access_changes` retention.
+
+**Verify:** unit tests for the connector and `fetchActual` pagination; a
+`report_only` run against one project asserting the expected `access_changes`
+and **zero** external writes; one target promoted to `additive`, asserting the
+`app_metadata` delta and that `provider`/`providers` survive; then **one
+`full`-enforcement canary** exercising downgrade, removal, pagination failure,
+partial failure and retry. `full` is where `revokeGrant` runs for the first time
+ever — stopping the gate at `additive` proves only the half that cannot revoke.
+
+### Phase 3 — enforcement
+
+Modifies the **live** auth path of four production apps (§1.1) using plugins with
+**no test coverage** (§1.2). Land per-plugin tests first.
+
+1. Enable `SupabasePlugin` alongside the existing `IdpToken` + `Database` set.
+2. Configure `ROLE_MAP_ADMIN` etc. — and note that DNs cannot be expressed in a
+   comma-split env var, so map on group **names**, or supply a `DbMappingLoader`.
+3. Precedence is a **union**, floored at `org:viewer`. Local `org_members` grants
+   survive a directory outage. The converse — that a local revocation cannot
+   strip a directory-granted role — is the accepted cost, and needs an explicit
+   local-deny mechanism if that becomes unacceptable.
+4. **Rolodex must not be a target of its own reconciler**, or `access_bindings`
+   mutation must require authority that is not JWT-derived — exactly what
+   `cogs/packages/auth/src/types.ts:5-8` already prescribes. Designate the
+   `org_members` row as root of trust and enforce it.
+5. Break-glass moves **into this phase**, not after it.
+
+### Phase 4 — UI, deprovisioning, migration
+
+1. Bindings screen in rolodex: group → app → role → preview → confirm.
+2. **Deprovisioning as a distinct deliverable**: session/refresh revocation, not
+   just role removal (§3). Add role gates to `routes/ldap.ts`.
+3. Migrate existing yellow-pages admins and `groups` values: backfill directory
+   groups and bindings **before** retiring the manual path, never after.
+
+---
+
+## 5. Decisions (settled 2026-07-31 with the user)
+
+- **Reconcile on `sync_run` completion plus an hourly floor.** Requires the
+  in-flight guard in Phase 2.7. The first draft's acceptance criterion ("a clean
+  pass writes zero `access_changes` rows") is unmeetable — `noop_already_granted`
+  is written per grant per run. Assert **zero rows with
+  `disposition != 'noop_already_granted'`** instead.
+- **One `fleetworks` platform org owns all five targets.** Note the tension: the
+  binding routes don't filter on `org_id` at all (§1.3), so this decision leans on
+  a boundary that Phase 1.2 must first make real.
+- **Service accounts eligible for `ci:agent` only via a confirmed binding.**
+  Two caveats discovered after the decision was made. First, it was justified by
+  an approval control that does not exist — approval covers the group→role edge,
+  never membership (§1.3) — so it holds only once Phase 0.2–0.4 land. Second,
+  **`is_service_account` is never populated by any sync source** (§1.6), so the
+  eligibility signal the decision names does not currently exist. Either populate
+  it or key service accounts off something real before relying on this.
+- **`custom_access_token` hook stays off.** Push-only; rolodex out of the login
+  path. Note §1.6 — the claim that it is currently off is unverified.
+
+---
+
+## 6. Non-goals
 
 - Moving roles into Zitadel (`project_role_assertion` stays `false`).
 - Replacing per-app auth or `org_members`.
-- Enterprise inbound BYO-IdP — that is sub-project 5, and it changes the
-  trust story for asserted emails (an external IdP *can* assert an unverified
-  one). Re-run the linking guard before Phase 1's email join is exposed to it.
+- Enterprise inbound BYO-IdP (sub-project 5). It changes the trust story for
+  asserted emails — an external IdP can assert an unverified one. Re-run the
+  linking guard before any email join is exposed to it.
