@@ -471,6 +471,14 @@ Modifies the **live** auth path of four production apps (§1.1) using plugins wi
    the rejection reason is not carried out to logging or metrics here, the
    distinction dies at the package boundary and staleness becomes undetectable
    in production — which is the failure the plugin was built to prevent.
+
+   **This is a hard rollout gate, not a nicety.** The plugin's adversarial gate
+   confirmed that a writer bug emitting `roles: []` fleet-wide would degrade
+   every principal to `org:viewer` **silently**, and that *nothing else surfaces
+   it* — the orchestrator's floor makes a mass outage indistinguishable from a
+   correct mass downgrade. It fails closed, so it is safe rather than dangerous,
+   but it is invisible. Wire `onReject` to a counter in all four apps **before**
+   flipping the toggle, not after.
 2. Configure `ROLE_MAP_ADMIN` etc. — and note that DNs cannot be expressed in a
    comma-split env var, so map on group **names**, or supply a `DbMappingLoader`.
 3. Precedence is a **union**, floored at `org:viewer`. Local `org_members` grants
