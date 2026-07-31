@@ -135,13 +135,32 @@ it. That is a behaviour change to a live auth path and wants its own verificatio
 
 ---
 
-## 6. Open for sign-off
+## 6. Decisions (signed off 2026-07-31)
 
-1. Path `app_metadata.fleetworks` — agreed?
-2. Staleness = 3× reconcile period, and stale means *ignore the subtree*, not
-   *demote the user* — agreed?
-3. Build `FleetworksClaimPlugin` rather than configure `SupabasePlugin` — this is
-   the main cost added by this doc (new code + first per-plugin tests in cogs).
-4. Break-glass as a table, not a claim — agreed?
-5. Disable `IdpTokenPlugin` on the four apps — or keep it and accept a grant
-   source the directory cannot revoke?
+All five settled. This doc is now the contract, not a proposal.
+
+1. **Path is `app_metadata.fleetworks`**, shape per §1.
+2. **Staleness = 3× the reconcile period, and stale means *ignore the subtree*** —
+   fall back to local `org_members`. Explicitly **not** a demotion to
+   `org:viewer`: flooring would strip a locally-granted admin during a rolodex
+   outage, contradicting the union precedence that exists to prevent exactly
+   that. Accepted cost: a stale grant that should have been revoked persists if
+   it also exists locally. Local revocation is the answer there, not staleness.
+3. **Build `FleetworksClaimPlugin`** (§3) rather than configure `SupabasePlugin`.
+   Configuration cannot enforce staleness at all, and its failure mode — missing
+   subtree indistinguishable from no roles — is the silent-success shape this
+   project keeps getting bitten by.
+4. **Break-glass is a server-side table, not a claim** (§4).
+5. **Disable `IdpTokenPlugin` on all four AuthRole apps.** It reads a top-level
+   `roles` claim (`config.ts:93`) that the reconciler can neither write nor
+   revoke — the same class of hole as yellow-pages' legacy `role`/`is_admin` bit.
+   Nothing emits that claim today (the custom access token hook is off, though
+   see plan §1.7 — that is unverified), so the blast radius is currently low and
+   one config change from live. This is a behaviour change to a live auth path in
+   four production repos and gets its own verification, per the adversarial gate.
+
+### Consequent build order
+
+`FleetworksClaimPlugin` + its tests must land in `@cogs/auth` **before** Phase 3
+touches any app's middleware, because Phase 3's edit is "swap `IdpToken` for
+`FleetworksClaim`" — a single change per app rather than two.
