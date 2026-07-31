@@ -23,6 +23,13 @@ primary_region = "sjc"
   # Must match the value the image was built with.
   NEXT_PUBLIC_BASE_PATH = "/ui/v2/login"
 
+  # WITHOUT THIS, SELF-REGISTRATION SILENTLY SKIPS EMAIL VERIFICATION.
+  # apps/login checkEmailVerification() only calls trySendVerification() when
+  # this is exactly the string "true"; unset, a new user is signed straight in
+  # with an unverified address and NO mail is ever sent. That also breaks the
+  # account-linking guarantee, which relies on a verified email.
+  EMAIL_VERIFICATION = "true"
+
   # Login v2 is hosted on a different origin than the API, so its own origin has
   # to be allowed for Next.js server actions.
   SERVER_ACTION_ALLOWED_ORIGINS = "account.fleetworks.dev"

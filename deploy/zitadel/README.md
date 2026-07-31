@@ -150,6 +150,40 @@ Homebrew's `terraform` formula is frozen at 1.5.7 because of the BUSL relicense.
 This root's state key (`fleetworks/hub`) is separate from every other repo's, so
 nothing else is pulled forward to the newer version.
 
+## Self-registration sends NO email unless EMAIL_VERIFICATION=true
+
+The login app's `checkEmailVerification()` (apps/login `src/lib/verify-helper.ts`)
+only calls `trySendVerification()` when `process.env.EMAIL_VERIFICATION` is
+exactly the string `"true"`. The official image does not set it. Left unset:
+
+- a user self-registers, is signed straight in with an **unverified** address,
+- **no verification mail is ever sent** (nothing appears in the Zitadel logs,
+  because no send is attempted), and
+- with no relying party to return to, they land on Zitadel's own
+  `/ui/console/users/me` profile page.
+
+That last part is only a cosmetic leak — a user with no instance membership sees
+just their own profile (`membership not found (AUTHZ-cdgFk)` in the logs) — but
+it should not be the destination for an end user. The supported journey is
+app → "Sign in with Fleetworks" → hub → back to the app.
+
+It also quietly breaks the linking guarantee, which depends on a verified email.
+`EMAIL_VERIFICATION = "true"` is now set in `deploy/account/fly.toml`.
+
+## Email templates
+
+Zitadel's stock text is Zitadel-branded ("Zitadel - Verify email") and its
+English set has no `VerifyEmail.Footer`, which logs
+`missing translation ... id=VerifyEmail.Footer` on every send. Both the
+verify-email and password-reset texts are now branded with a footer, set via
+`PUT /admin/v1/text/message/{verifyemail,passwordreset}/en`. These are instance
+config, NOT in Terraform yet — re-apply them on a fresh instance.
+
+Unrelated but noted: Zitadel tries implicit TLS against `:587` first, fails with
+`tls: first record does not look like a TLS handshake`, then succeeds over
+STARTTLS. Harmless, one wasted round-trip per send. Switching to `:465` would
+remove it, at the cost of churning a proven-working mail path.
+
 ## Account linking — measured, not assumed
 
 Supabase's docs do not state whether the `email_verified` claim gates identity
