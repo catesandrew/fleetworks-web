@@ -197,19 +197,37 @@ authorization source lets a user self-assert their own roles. The fix is for a
 **server-side** path — the reconcile loop, or a `before_user_created` /
 `custom_access_token` hook — to copy verified identity into `app_metadata`.
 
-### 1.6 The directory sync populates less than the schema suggests
+### 1.6 Only one of three sync sources is implemented — it is AD, not Workday
 
-`directory_users` has 40+ columns, but the sync model cannot fill most of them:
+Rolodex is described (including in its own CLAUDE.md) as an Active Directory
+**and Workday** cache. Today it is AD only:
 
-- `MappedUser` (`apps/api/src/sync/source.ts:6-`) has **no `workEmail` and no
-  `isServiceAccount`**. Grepping `workEmail|work_email|isServiceAccount` across
-  `apps/api/src/sync/` returns **nothing**.
-- So **`work_email` is a dead column** — never written by any sync source. Any
-  join that reads `mail OR work_email` is really joining on `mail` alone.
-- **`is_service_account` is likewise never populated by sync.**
-- Departures are marked `workerStatus = 'Inactive'` (`sync/run.ts:255`), not
-  deleted. A stale inactive row with a live mailbox is still joinable unless the
-  join explicitly rejects it.
+| source | file | state |
+|---|---|---|
+| LDAP / AD | `sync/ldap-source.ts` | 189 lines, real |
+| Workday | `sync/workday-source.ts` | **15-line stub**, `:11` throws `'Workday sync not yet implemented'` |
+| SCIM | `sync/scim-source.ts` | **15-line stub** |
+
+This explains the column gaps rather than treating them as separate bugs.
+`MappedUser` (`sync/source.ts:6-25`) carries exactly: `distinguishedName`
+(non-null), `objectGuid`, `samAccountName`, `displayName`, `givenName`, `sn`,
+`mail`, `title`, `description`, `telephoneNumber`, `whenCreated`, `manager`,
+`employeeType`, `homeDirectory`, `loginShell`, `uidNumber`, `gidNumber`,
+`sshPublicKey`, `importedFrom` — every one an AD attribute. Consequently:
+
+- **`work_email`, `employee_number`, `dss_username`, `is_service_account`,
+  `worker_status`, `cost_center_unique_id` are never written by any sync.** They
+  are the Workday half of the schema, and Workday is a stub. Grepping
+  `workEmail|work_email|isServiceAccount|employeeNumber` across `sync/` returns
+  nothing.
+- Any join reading `mail OR work_email` is really joining on `mail` alone.
+- The one exception is `worker_status`, which the **soft-delete** path writes:
+  when a DN present in `directory_users` no longer appears in the source snapshot,
+  `run.ts:269` sets `workerStatus: 'Inactive'`. So it is an AD-vanished tombstone,
+  not an HR status — but it *is* a usable departure signal, and the join must
+  reject those rows.
+- Sync matches existing rows on `objectGuid`, then falls back to
+  `distinguishedName` (`run.ts:120-130`).
 
 ### 1.7 NOT verified — do not size off these
 
@@ -253,6 +271,39 @@ dependency in the login path. That choice survived review. What did not survive
 is the belief that push is *safe by default*: its failure mode is silent
 (§1.3, `driftDetected` hole + `last_status` nobody watches), so observability is
 part of Phase 2, not a later nicety.
+
+### 2.1 Identity model
+
+The first draft's answer — "verified email → `directory_users.mail`" — is dead.
+Email is not an identity: the column has no unique index, `work_email` is never
+populated (§1.6), addresses get recycled to new hires (§3), and mailbox control
+says nothing about the trustworthiness of the directory row keyed to it.
+
+What the sync actually gives us to key on, in descending order of stability:
+
+| key | populated? | stable across rename/move? | unique index? |
+|---|---|---|---|
+| `object_guid` | yes, nullable | **yes** — AD's immutable identifier | yes |
+| `distinguished_name` | yes, non-null | no — changes on OU move | yes |
+| `sam_account_name` | yes, nullable | mostly, but reusable after departure | yes |
+| `mail` | yes, nullable | no | **no** |
+| `employee_number` | **never** (Workday stub) | — | yes |
+
+**Therefore:** `object_guid` is the identity anchor, `distinguished_name` the
+fallback — the same precedence the sync itself uses to match rows
+(`run.ts:120-130`), which keeps this model consistent with how the directory
+already reconciles itself.
+
+Email's only role is as a **one-time linking hint**, at the moment a Fleetworks
+principal is first bound to a directory row — and even then it is a proposal a
+human confirms, never an automatic join. The binding is then stored explicitly
+(`user_external_identities` is the existing table for exactly this) and keyed on
+`object_guid` thereafter. Linking must refuse any row whose
+`worker_status = 'Inactive'`.
+
+This is the difference between *authentication* (the hub proved you control this
+mailbox) and *identification* (this is which employee you are). The first draft
+conflated them; the hub can only ever supply the first.
 
 ---
 
@@ -303,10 +354,10 @@ previous draft put the parser change before the contract that defines it.
    Supabase key is stored. Decide key custody separately — one application KEK
    over five `service_role` keys keeps the blast radius whether or not the
    plaintext bug is fixed.
-6. Decide the join key. `work_email` is a dead column and `mail` has no unique
-   index (§1.6, §1.3); mailbox control is not identity. Prefer a stable
-   enterprise identifier (`object_guid` / `employee_number`) resolved once at
-   link time, and reject `workerStatus = 'Inactive'` rows.
+6. Implement the §2.1 identity model: `object_guid` as anchor,
+   `distinguished_name` as fallback, email as a one-time human-confirmed linking
+   hint only, and reject `worker_status = 'Inactive'` rows at link time.
+   **Not `employee_number`** — it is never populated (§1.6).
 
 ### Phase 1 — unify the vocabulary in yellow-pages
 
@@ -417,8 +468,9 @@ Modifies the **live** auth path of four production apps (§1.1) using plugins wi
   an approval control that does not exist — approval covers the group→role edge,
   never membership (§1.3) — so it holds only once Phase 0.2–0.4 land. Second,
   **`is_service_account` is never populated by any sync source** (§1.6), so the
-  eligibility signal the decision names does not currently exist. Either populate
-  it or key service accounts off something real before relying on this.
+  eligibility signal the decision names does not currently exist — it is a
+  Workday column and Workday is a stub (§1.6). AD's `employeeType` **is**
+  populated; key service accounts off that, or off an explicit rolodex-side flag.
 - **`custom_access_token` hook stays off.** Push-only; rolodex out of the login
   path. Note §1.6 — the claim that it is currently off is unverified.
 
