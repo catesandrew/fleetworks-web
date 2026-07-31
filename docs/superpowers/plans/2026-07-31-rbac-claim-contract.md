@@ -30,7 +30,16 @@ downstream either writes or parses this, so it is specified before any of it.
 | `v` | schema version, integer. Unknown version ⇒ **ignore the whole subtree** |
 | `roles` | `AuthRole[]`. Anything not in the vocabulary is dropped, not passed through |
 | `source` | provenance. Only `"rolodex"` is honoured today |
-| `syncedAt` | RFC 3339 UTC. Absent ⇒ treat as stale |
+| `syncedAt` | RFC 3339 with an **explicit** offset (`Z` or `±HH:MM`). Absent ⇒ treat as stale |
+
+**`syncedAt` must carry an explicit offset, and readers must enforce it.**
+`Date.parse` follows ECMA-262: a date-time string with no offset is parsed as
+**reader-local** time. Measured on `America/Los_Angeles`, `"2026-07-31T12:00:00"`
+resolves 7 hours later than the same string with `Z` — so a 9-hour-stale claim
+reads as 2 hours old and is accepted. Negative-offset zones fail **open**, which
+is every US deployment. A reader that only checks `Date.parse` didn't return
+`NaN` has not validated anything. Reject a missing offset, and reject the legacy
+formats `Date.parse` also swallows (`"Jul 31 2026 20:00:00 GMT"` parses fine).
 
 **Sole writer: the rolodex reconcile loop.** No other process writes
 `app_metadata.fleetworks`. Break-glass does not live here (§4).
@@ -90,7 +99,16 @@ plugin arrays all four AuthRole apps already build. It must:
 3. validate `roles` against `VALID_ROLES` and **drop** anything else — never rely
    on mapper passthrough;
 4. return `[]` on every rejection, and distinguish the reasons in a log line so
-   "stale" is not silently identical to "no roles".
+   "stale" is not silently identical to "no roles";
+5. **validate its own options at construction and throw.** The staleness horizon
+   is supplied at wiring time by four separate apps (§5), so a bad value is a
+   live failure mode, not a hypothetical: `3 * Number(process.env.SOMETHING) * 60_000`
+   with the variable unset is `NaN`, and every comparison against `NaN` is
+   `false` — which turns both the staleness and skew checks into silent no-ops
+   that still report healthy. `??` does not guard this; it only guards
+   `undefined`/`null`. Require finite and non-negative, and **throw rather than
+   defaulting** — a silent fallback reproduces the same class of bug one layer
+   down. A misconfigured security control should refuse to start.
 
 It ships with tests. Note that `@cogs/auth` currently has **no** per-plugin tests
 at all (`packages/auth/test/` covers mapping, orchestrator, roles, verify,
