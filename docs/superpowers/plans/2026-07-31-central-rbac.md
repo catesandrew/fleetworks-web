@@ -430,7 +430,15 @@ ever — stopping the gate at `additive` proves only the half that cannot revoke
 Modifies the **live** auth path of four production apps (§1.1) using plugins with
 **no test coverage** (§1.2). Land per-plugin tests first.
 
-1. Enable `SupabasePlugin` alongside the existing `IdpToken` + `Database` set.
+1. Swap `IdpTokenPlugin` for `FleetworksClaimPlugin` alongside the existing
+   `Database` provider (contract §6.5 disables IdpToken on all four).
+   **Route the plugin's `onReject` somewhere real.** `resolveRolesFromPlugins`
+   floors unconditionally at `DEFAULT_ROLE` (`orchestrator.ts:38`), so "stale
+   rolodex claim" and "genuinely has no roles" both arrive at the middleware as
+   `["org:viewer"]`. The plugin distinguishes them; the orchestrator cannot. If
+   the rejection reason is not carried out to logging or metrics here, the
+   distinction dies at the package boundary and staleness becomes undetectable
+   in production — which is the failure the plugin was built to prevent.
 2. Configure `ROLE_MAP_ADMIN` etc. — and note that DNs cannot be expressed in a
    comma-split env var, so map on group **names**, or supply a `DbMappingLoader`.
 3. Precedence is a **union**, floored at `org:viewer`. Local `org_members` grants
