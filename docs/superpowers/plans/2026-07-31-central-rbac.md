@@ -163,6 +163,14 @@ import (`:794-829`) — but **not** on a change to `group_members`, which
 - `fetchActual` is complete-or-throw; partial results are forbidden
   (`connector.ts:31-40`) and a throw fails the whole target run
   (`reconcile.ts:128-144`).
+- **Target mutations are unaudited.** `access_bindings` carries `createdBy` and
+  `confirmedBy`, and `access_changes` records what the reconciler *did* — but
+  nothing records who changed a target's `config`, `enforcement` or `secret`.
+  Verified: no `emitEvent` or audit write on the target routes, and zero hits for
+  `updatedBy|changedBy|updated_by` across all 20 tables in
+  `packages/db/src/schema.ts`. So the ledger captures effects, not causes. A
+  credential swap in particular leaves no trace anywhere. Anything that treats
+  `access_changes` as *the* audit trail is overclaiming.
 - `access_changes` rows are written in **one batch at the end**
   (`reconcile.ts:316-329`) while `applyGrant` calls happen one-by-one
   (`:209-236`). A crash mid-run leaves external writes with **no ledger rows**.
