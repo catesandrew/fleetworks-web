@@ -1,7 +1,7 @@
 # Zitadel's own configuration plane as IaC.
 #
 # The server itself (container image, Postgres, custom domain) is provisioned on
-# Render — see deploy/zitadel/README.md. Everything BELOW this line is Zitadel's
+# Fly — see deploy/zitadel/README.md. Everything BELOW this line is Zitadel's
 # internal config: the project, the per-app OIDC clients that products federate
 # through, the SES sending config, and instance branding.
 #
@@ -68,7 +68,18 @@ resource "zitadel_application_oidc" "yellow_pages" {
 # Credentials come straight from this root's IAM resources (iam.tf) — no manual
 # copy/paste of an SMTP password, and rotation is `terraform apply`.
 resource "zitadel_email_provider_smtp" "ses" {
-  description      = "AWS SES (${var.ses_region}) — auth.id.fleetworks.dev"
+  description = "AWS SES (${var.ses_region}) — auth.id.fleetworks.dev"
+  # DELIBERATELY :587 (STARTTLS), not :465. Zitadel logs
+  #   "could not connect using normal tls. trying starttls instead..."
+  # on every send here — one wasted round-trip, then it succeeds. Moving to :465
+  # to silence that was tried and REVERTED: updating a live SMTP config trips a
+  # Zitadel bug where the projection emits invalid SQL —
+  #   projections.smtp_configs6: multiple assignments to same column "password"
+  #   (SQLSTATE 42601)
+  # which wedges the projection. Mail kept flowing on the last good projected
+  # row (:587), so the new port never took effect and the only result was a
+  # stuck projection. Not worth it for a cosmetic log line; revisit when
+  # upstream fixes the double-assignment.
   host             = "email-smtp.${var.ses_region}.amazonaws.com:587"
   user             = aws_iam_access_key.ses[var.hub_identity_domain].id
   password         = aws_iam_access_key.ses[var.hub_identity_domain].ses_smtp_password_v4
@@ -100,6 +111,84 @@ resource "zitadel_default_label_policy" "fleetworks" {
   hide_login_name_suffix = true
   disable_watermark      = true
   set_active             = true
+}
+
+# ── Login behaviour ──────────────────────────────────────────────────────────
+# Every value here restates the instance's existing defaults EXCEPT
+# default_redirect_uri. Without it, a user who reaches the hub directly (rather
+# than through an app's "Sign in with Fleetworks") finishes login on a dead-end
+# "You are signed in." page with nowhere to go. This sends them to the apex,
+# which lists the products. The real fix is the account portal (sub-project 6).
+resource "zitadel_default_login_policy" "fleetworks" {
+  default_redirect_uri = "https://fleetworks.dev"
+
+  user_login               = true
+  allow_register           = true
+  allow_external_idp       = true
+  allow_domain_discovery   = true
+  force_mfa                = false
+  force_mfa_local_only     = false
+  hide_password_reset      = false
+  ignore_unknown_usernames = false
+  passwordless_type        = "PASSWORDLESS_TYPE_ALLOWED"
+
+  second_factors = ["SECOND_FACTOR_TYPE_OTP", "SECOND_FACTOR_TYPE_U2F"]
+  multi_factors  = ["MULTI_FACTOR_TYPE_U2F_WITH_VERIFICATION"]
+
+  password_check_lifetime       = "864000s"
+  external_login_check_lifetime = "864000s"
+  mfa_init_skip_lifetime        = "2592000s"
+  second_factor_check_lifetime  = "64800s"
+  multi_factor_check_lifetime   = "43200s"
+}
+
+# ── Transactional message copy ───────────────────────────────────────────────
+# Zitadel's stock text is Zitadel-branded ("Zitadel - Verify email") and its
+# English set omits VerifyEmail.Footer, which logs a `missing translation`
+# warning on every send. These were first set by hand through the admin API;
+# they live here so a rebuilt instance keeps the branding.
+resource "zitadel_default_verify_email_message_text" "en" {
+  language    = "en"
+  title       = "Fleetworks — verify your email"
+  pre_header  = "Verify your email address"
+  subject     = "Verify your Fleetworks email address"
+  greeting    = "Hello {{.DisplayName}},"
+  text        = "Welcome to Fleetworks. Use the button below to verify your email address, or enter this code: {{.Code}}. If you did not create a Fleetworks account, you can safely ignore this message."
+  button_text = "Verify email"
+  footer_text = "Sent by Fleetworks · fleetworks.dev"
+}
+
+resource "zitadel_default_password_reset_message_text" "en" {
+  language    = "en"
+  title       = "Fleetworks — reset your password"
+  pre_header  = "Reset your password"
+  subject     = "Reset your Fleetworks password"
+  greeting    = "Hello {{.DisplayName}},"
+  text        = "We received a request to reset your Fleetworks password. Use the button below, or enter this code: {{.Code}}. If you did not request this, you can safely ignore this message and your password will stay unchanged."
+  button_text = "Reset password"
+  footer_text = "Sent by Fleetworks · fleetworks.dev"
+}
+
+resource "zitadel_default_init_message_text" "en" {
+  language    = "en"
+  title       = "Fleetworks — activate your account"
+  pre_header  = "Activate your account"
+  subject     = "Activate your Fleetworks account"
+  greeting    = "Hello {{.DisplayName}},"
+  text        = "A Fleetworks account was created for you. Use the button below to set your password and activate it, or enter this code: {{.Code}}."
+  button_text = "Activate account"
+  footer_text = "Sent by Fleetworks · fleetworks.dev"
+}
+
+resource "zitadel_default_invite_user_message_text" "en" {
+  language    = "en"
+  title       = "Fleetworks — you have been invited"
+  pre_header  = "You have been invited to Fleetworks"
+  subject     = "You have been invited to Fleetworks"
+  greeting    = "Hello {{.DisplayName}},"
+  text        = "You have been invited to Fleetworks. Use the button below to accept the invitation and set your password, or enter this code: {{.Code}}."
+  button_text = "Accept invitation"
+  footer_text = "Sent by Fleetworks · fleetworks.dev"
 }
 
 # ── Outputs consumed by the Supabase Custom OIDC provider (Task 5) ───────────
