@@ -406,6 +406,20 @@ not a config value.
    `fetchActual` revokes everyone it omitted — so this needs a pagination fixture
    test before it runs anywhere near production.
 4. `applyGrant` merges the namespaced subtree; never replaces `raw_app_meta_data`.
+   **Verify against a live project first, not from docs.** The writer needs the
+   Supabase **Admin** API (`PUT /auth/v1/admin/users/{id}`) — a different surface
+   from the Management API that `@cogs/supabase-sync` wraps, so it does not
+   extend that client and needs a new one. `@cogs/supabase-sync` touches no user
+   rows at all (zero hits for `app_metadata` / `raw_app_meta_data` /
+   `updateUserById` across its `src/`); it configures projects, and Supabase
+   populates `app_metadata.provider` itself at sign-in. So whether that endpoint
+   shallow-merges `app_metadata` or replaces it outright is **unverified**, and
+   the contract's §1 guarantee depends on the answer: if it merges, the platform
+   gives us "subtree replaced, `provider`/`providers` untouched" for free; if it
+   replaces, the writer must read-modify-write and that guarantee becomes the
+   writer's responsibility — with a concurrency hazard the plan's in-flight guard
+   (2.7) does not cover, because it would then be a cross-process read-write race
+   against yellow-pages' `/admin/users`.
 5. Set `enforcement` explicitly per target and justify it. `additive` never
    revokes; `full` gives `revokeGrant` its first production exercise. Stage it:
    `report_only` → `additive` → `full`, one target at a time.
