@@ -341,7 +341,14 @@ conflated them; the hub can only ever supply the first.
 
 ## 4. Phases
 
-> **STATUS 2026-08-01.** Phase 0 is 4/6 done and Phase 4.3 is fully done — both
+> **STATUS 2026-08-01 (updated).** The claim contract's §3 deliverable —
+> `FleetworksClaimPlugin` — is **BUILT, merged and published** in `@cogs/auth@0.4.0`
+> (`0241394`), and is stronger than §3 specified: it also rejects calendar-overflow
+> dates that `Date.parse` rolls *forward* into freshness, far-future stamps that
+> never age out, and a `now()` returning `NaN`. Phase 3.1 consumes it; nothing in
+> Phase 0–2 needs to build it.
+>
+> Phase 0 is 5/6 done and Phase 4.3 is fully done — both
 > as side effects of the three rolodex security bugs fixed on 2026-07-31.
 > Shipped: 0.1 (contract signed off), 0.2 (`e342b1c` — binding routes org-scoped,
 > self-confirm rejected; `role` validated against the TARGET'S PROVIDER vocabulary,
@@ -350,7 +357,10 @@ conflated them; the hub can only ever supply the first.
 > change resets child approvals), 0.5 (`e342b1c` — `sealSecret` throws
 > `MissingKekError`), and 4.3 with both prerequisites (`906148a` PAT allowlist,
 > `1bae8b5` directory gate — which also needed `/keys/*` gated separately).
-> **Remaining in Phase 0: 0.4 and 0.6.** Everything in Phases 1–3 is untouched.
+> 0.4 shipped as `bcd8c5a` (membership fingerprint; migration `0011` applied to
+> production first, since the column is in the Drizzle schema and every
+> `access_bindings` select would otherwise 500).
+> **Remaining in Phase 0: 0.6 only**, now folded into Phase 2 where the fork lands. Everything in Phases 1–3 is untouched.
 
 ### Phase 0 — the claim contract, and the controls Phase 2 stands on
 
@@ -429,7 +439,7 @@ Larger than the first draft implied: it touches `apps/api/src/auth/middleware.ts
    (`supabase.ts:4-5`). Hub users get their claim from the server-side path in
    §1.5, not from a client-writable bag.
 4. Retire or namespace the legacy `app_metadata.role` / `is_admin` admin bit
-   (`admin-users.ts:157`). Left in place, it is a grant the directory cannot
+   (`admin-users.ts:~182` — the plan cited `:157`, which is the request destructure, not the write). Left in place, it is a grant the directory cannot
    revoke, which defeats Phase 3's whole point.
 5. Give the API-key path an explicit `AuthRole` mapping rather than leaving it
    short-circuited.
