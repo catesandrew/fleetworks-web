@@ -415,9 +415,20 @@ claim until Phase 2.
 Re-scoped. This is a connector with a principal model no existing connector uses,
 not a config value.
 
-1. Decide and record: **fork `runReconcile`'s member-expansion loop** for an
-   identity-resolving provider, **or** adopt `user_external_identities` and accept
-   a per-employee import. One target per Supabase project, `external_target` = the
+1. **DECIDED 2026-08-01: fork `runReconcile`'s member-expansion loop** for an
+   identity-resolving provider. Rejected: adopting `user_external_identities`
+   as-is (its `UNIQUE (user_id, provider)` cannot represent one person across five
+   Supabase projects, and it would impose a manual per-employee, per-project CSV
+   import), and a purpose-built link table (cleanest model, but a second
+   identity-linking concept beside the existing one is how divergence starts —
+   this plan exists because three role implementations diverged).
+
+   The fork carries the risk: `runReconcile` is the loop three working connectors
+   (github, gitlab, azure-devops) depend on, so the provider branch must be
+   additive and those three need regression coverage proving their path is
+   untouched. **This is also Phase 0.6** — the fork is where the §2.1 identity
+   model lands: `object_guid` anchor, `distinguished_name` fallback, email as a
+   one-time human-confirmed linking hint only, reject `worker_status = 'Inactive'`. One target per Supabase project, `external_target` = the
    project ref (restores the dimension the unique index needs). **Do not create a
    rolodex target until Phase 3.4 has settled self-targeting** — a target created
    here lets JWT-derived rolodex admins mutate the bindings that manufacture their
