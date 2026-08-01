@@ -381,6 +381,36 @@ previous draft put the parser change before the contract that defines it.
    hint only, and reject `worker_status = 'Inactive'` rows at link time.
    **Not `employee_number`** — it is never populated (§1.6).
 
+### Phase 0.7 — two fail-opens found while building 0.4 [TODO]
+
+Both pre-existing, both verified in source 2026-08-01.
+
+1. **Deprovisioning silently stops when a bound group empties.**
+   `reconcile.ts:167` builds `uniqueTargets` from `desiredGrants`, then passes it
+   to `fetchActual` (`:170`). A bound group with zero *mapped* members contributes
+   no `externalTarget`, so the platform's actual grants for that target are never
+   fetched, never diffed, and **no revoke is ever emitted** — at exactly the moment
+   revocation matters most. No test catches it because `fake-connector.ts:37-53`
+   ignores its `_targets` argument and returns everything, so the fake cannot
+   express the bug. **Must be fixed before any target is set to
+   `enforcement: 'full'` (Phase 2.5)** — under the shipped `additive` default
+   nothing revokes anyway, which is the only reason this is currently latent.
+
+2. **`POST /api/access/bindings` never validates `rolodexGroupId`.**
+   It org-scopes the *target* (`findTargetInOrg`, the Phase 0.2 fix) but inserts
+   the group id on trust, and `directory_groups` has no org column — the directory
+   is global. So any `org:admin` can bind **any** group in the directory to their
+   own org's target, and can enumerate another tenant's group structure by FK
+   error. Latent today with a single production org; real the moment there are two.
+   This is a seventh hole inside a route Phase 0.2 already fixed.
+
+### Phase 4.5 — surface a held binding in the UI [TODO]
+
+`binding_stale` maps to no counter on `access_runs`, so a binding held by the
+0.4 control appears in the dashboard only as `driftDetected: true` —
+indistinguishable from ordinary drift, with no re-confirm prompt. A fail-closed
+control nobody can see is a control that gets switched off.
+
 ### Phase 1 — unify the vocabulary in yellow-pages
 
 Larger than the first draft implied: it touches `apps/api/src/auth/middleware.ts`,
