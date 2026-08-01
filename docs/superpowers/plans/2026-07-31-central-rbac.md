@@ -526,6 +526,42 @@ only when both of these are fixed.
 contributes to desired state on this run. Three gate rounds each found a new layer
 of this same mistake, which is why the interlock is code and not a comment.
 
+### Phase 2 — what is actually deployed, as of 2026-08-01
+
+The connector is merged (`aacd5cc`) and live. **One pilot target exists in
+production and is deliberately left in place** as standing proof the pipeline
+works end to end:
+
+- `access_targets`: 1 — provider `fleetworks`, `enforcement: 'additive'`,
+  config `{supabaseUrl, projectRef}` for rolodex's own Supabase project, holding
+  that project's `service_role` key sealed with `SYNC_SECRET_KEK`.
+- `access_bindings`: 1 — `engineering-all` (16 members) → `org:contributor`,
+  confirmed, with a valid membership fingerprint.
+- **Nothing runs it on a schedule.** No cron in `render.yaml`, no scheduler
+  reference anywhere. It is inert until `/internal/access/reconcile` is called
+  with the drain token.
+
+Result of the smoke run: `success` in 3.10s — 0 grants, 0 revokes, **16
+`skipped_unmapped`, and zero writes to the real project.** Every stage executed:
+config validation, secret decryption with the deployed KEK, `fetchActual` paging
+the live project, identity resolution, coverage and diff, ledger. It correctly
+does nothing.
+
+**THE DIRECTORY IS FIXTURE DATA — this is the real blocker, not the targets.**
+`sync_sources = 0` and `sync_runs = 0`: no directory source has ever been
+configured and the sync has never run. All 44 `directory_users` are seeded
+(`imported_from` = `'sailpoint - Acme'` / `'terraform'`, emails `@acme.com`,
+created by `packages/db/src/seed/index.ts`), and they share **zero** emails with
+the four real `auth.users` in the project. `user_external_identities` for
+`fleetworks:*` is empty.
+
+So the critical path is NOT more targets. It is: configure an LDAP `sync_source`
+against real AD → run it → human-confirm identity links via
+`/api/access/identities/fleetworks/propose` then `/link` → only then do targets
+and bindings provision anyone. The plan recorded that the Workday source is a
+stub that throws; nobody had checked whether the LDAP source was ever configured.
+It was not.
+
 ### Phase 4.5 — surface a held binding in the UI [TODO]
 
 `binding_stale` maps to no counter on `access_runs`, so a binding held by the
