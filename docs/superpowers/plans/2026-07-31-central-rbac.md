@@ -341,6 +341,17 @@ conflated them; the hub can only ever supply the first.
 
 ## 4. Phases
 
+> **STATUS 2026-08-01.** Phase 0 is 4/6 done and Phase 4.3 is fully done — both
+> as side effects of the three rolodex security bugs fixed on 2026-07-31.
+> Shipped: 0.1 (contract signed off), 0.2 (`e342b1c` — binding routes org-scoped,
+> self-confirm rejected; `role` validated against the TARGET'S PROVIDER vocabulary,
+> not `AuthRole`, because `access_bindings.role` is an external platform role —
+> the plan was wrong on that point), 0.3 (`e342b1c` — target `config`/`enforcement`
+> change resets child approvals), 0.5 (`e342b1c` — `sealSecret` throws
+> `MissingKekError`), and 4.3 with both prerequisites (`906148a` PAT allowlist,
+> `1bae8b5` directory gate — which also needed `/keys/*` gated separately).
+> **Remaining in Phase 0: 0.4 and 0.6.** Everything in Phases 1–3 is untouched.
+
 ### Phase 0 — the claim contract, and the controls Phase 2 stands on
 
 Ordered first because everything downstream parses or writes this claim. The
@@ -357,12 +368,15 @@ previous draft put the parser change before the contract that defines it.
    version. Today `confirm` just sets `previewed = true` (`access.ts:667`), and
    toggling `active` deliberately does not reset it (`:594`), so an inactive
    binding can be confirmed without ever entering a reconcile and then activated.
-4. Treat a `group_members` delta on a bound group as approval-invalidating.
+4. **[TODO]** Treat a `group_members` delta on a bound group as approval-invalidating.
+   Today only an external-login change resets `previewed` (`access.ts:923`); a
+   membership change does not, so approval covers the group→role edge and never
+   the group's contents.
 5. Make `SYNC_SECRET_KEK` mandatory and `sealSecret` fail loudly, before any
    Supabase key is stored. Decide key custody separately — one application KEK
    over five `service_role` keys keeps the blast radius whether or not the
    plaintext bug is fixed.
-6. Implement the §2.1 identity model: `object_guid` as anchor,
+6. **[TODO — belongs with Phase 2, blocked on decision 2.1]** Implement the §2.1 identity model: `object_guid` as anchor,
    `distinguished_name` as fallback, email as a one-time human-confirmed linking
    hint only, and reject `worker_status = 'Inactive'` rows at link time.
    **Not `employee_number`** — it is never populated (§1.6).
