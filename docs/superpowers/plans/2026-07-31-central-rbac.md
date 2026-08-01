@@ -540,13 +540,30 @@ not a config value.
    replacement is also what makes revocation work at all: a deep merge would have
    made `roles: []` a no-op.
 
-   **Caveat:** measured on local GoTrue v2.192.0, not against a hosted project.
-   Re-confirm on one hosted project before the loop goes live, and pin the
-   assumption in a test — if a future GoTrue ever deep-merged, revocation would
-   silently stop working with no error anywhere.
-5. Set `enforcement` explicitly per target and justify it. `additive` never
-   revokes; `full` gives `revokeGrant` its first production exercise. Stage it:
-   `report_only` → `additive` → `full`, one target at a time.
+   **CONFIRMED ON HOSTED 2026-08-01** (project `ndeubizireenktnvimiq`, throwaway
+   user, created and deleted). Hosted behaviour matches local exactly: writing only
+   the `fleetworks` subtree left `provider`, `providers` AND the `yellowpages`
+   break-glass subtree intact, dropped `syncedAt` (so the subtree is replaced, not
+   deep-merged), and `roles: []` genuinely emptied. Revocation therefore works
+   under `full`. Still pin it in a test — a future GoTrue that deep-merged would
+   silently stop revoking with no error anywhere.
+5. **DECIDED 2026-08-01: seed the fleetworks targets at `enforcement: 'full'`
+   directly, five-wide.** Production holds zero `access_targets`, so there is
+   nothing to promote — this is a seeding value, not a migration. The staged
+   `report_only → additive → full` path was the recommendation; `full` was chosen
+   deliberately, accepting that `revokeGrant` gets its first production exercise
+   across five projects at once.
+
+   What that buys: deprovisioning actually works on day one. Under `additive` a
+   departed employee keeps a live claim in all five projects — measured on the
+   branch, `{departedUsers: 1, revokesReported: 1, revokesApplied: 0}` — because
+   the `worker_status = 'Inactive'` tombstone only blocks a NEW grant.
+
+   What it costs: an untested revoke path runs live. The mitigations that make it
+   defensible are (a) the `uniqueTargets` fix, which is scoped to exactly this
+   provider, so a bound group emptying still emits revokes; (b) `writeClaim`
+   refusing to overwrite a `foreign` subtree, so a rollback cannot destroy a newer
+   claim; and (c) the merge semantics now verified on hosted infrastructure.
 6. Move `access_changes` writes to accompany each `applyGrant`, so a crash cannot
    leave external writes unlogged. Set `driftDetected` on apply failure.
 7. Add an in-flight guard (advisory lock or a partial unique index on
