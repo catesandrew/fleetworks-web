@@ -455,6 +455,43 @@ target is promoted to `full`. The staging (`report_only → additive → full`) 
 working as designed; the point is that "Phase 2 shipped" must not be read as
 "deprovisioning works".
 
+### Phase 2.9 — four properties the revoke path must hold under `full` [CONSTRAINTS]
+
+Found by the second gate on the connector branch, all four newly live because
+`full` was chosen. They are recorded as constraints rather than bugs: any future
+change to the revoke path has to preserve them.
+
+1. **Revokes must be restricted to `(externalTarget, role)` pairs an ACTIVE
+   binding covers.** `fleetworks.fetchActual` returns every rolodex-sourced claim
+   on every user in the project, and the revoke loop revokes anything absent from
+   the desired set. Without a covering-pair filter, seeding five targets at `full`
+   deletes every pre-existing `{source:'rolodex'}` claim holding a role the
+   directory does not reproduce. **This was pinned by a passing test** asserting
+   an out-of-band `org:admin` on a stranger IS revoked — the suite certified the
+   dangerous behaviour, which is why a green run proved nothing here.
+2. **The revoke path must consult `previewed`.** Grants require
+   `previewed && !membershipStale`; revokes required only `enforcement === 'full'`.
+   Worse, `membershipStale` is itself `binding.previewed && mismatch`, so an
+   UNCONFIRMED binding produced no hold and left revokes fully armed — meaning
+   `previewed = false` *disarmed* the only protection instead of applying it.
+3. **An empty desired state must not wipe the project.** One active binding forces
+   a whole-project fetch, so if desired collapses to zero — identity desync,
+   departed rows, a lost `user_external_identities` link — every claim in the
+   project is revoked, with an unchanged fingerprint so no stale hold fires. Needs
+   a floor guard.
+4. **The stale hold must be keyed per-binding.** Keying on
+   `externalTarget|role` degenerates to role-only for fleetworks, because
+   `externalTarget === projectRef` is now guaranteed at both the binding and the
+   connector. One stale binding therefore suppressed every revoke of that role
+   PROJECT-WIDE, including revokes owned by a properly confirmed binding.
+
+**The pattern worth carrying forward:** widening what a connector fetches is not
+a local change. Deriving `uniqueTargets` from bindings closed a real fail-open and
+simultaneously converted a narrow revoke path into whole-project authority.
+Scoping it to one provider bounded the blast radius to that provider — not to the
+bindings that provider manages. Under `additive` none of this was reachable;
+`full` made all four lethal at once.
+
 ### Phase 4.5 — surface a held binding in the UI [TODO]
 
 `binding_stale` maps to no counter on `access_runs`, so a binding held by the
