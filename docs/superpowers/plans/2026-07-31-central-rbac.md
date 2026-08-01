@@ -562,6 +562,58 @@ and bindings provision anyone. The plan recorded that the Workday source is a
 stub that throws; nobody had checked whether the LDAP source was ever configured.
 It was not.
 
+### Phase 5 — `native` directory provider (rolodex as its own source of truth) [DESIGNED]
+
+**Why.** The plan assumed an enterprise directory feeding rolodex. Investigation
+2026-08-01 found there isn't one and there is no population that needs one: no
+`sync_source` has ever been configured, all 44 `directory_users` are `@acme.com`
+seed rows, and Zitadel — the obvious candidate — holds **zero** project roles,
+**zero** user grants, and has **no groups API at all** (v4.16.2; three endpoint
+probes returned 404). It is a pure authentication hub by design
+(`project_role_assertion = false`). A Zitadel source would sync nothing, and
+making it sync something means hand-maintaining the same data in two systems.
+
+**So `native` is an ADDITIONAL provider, not a replacement.** LDAP/AD/Workday/SCIM
+stay exactly as they are. `native` covers the case where rolodex itself is the
+authority and there is no upstream to sync from.
+
+**The mechanism already exists.** Soft-delete is scoped
+`WHERE imported_from LIKE '<prefix>%'`, where the prefix comes from the syncing
+source (`ldap:<host>`). A row marked `imported_from = 'native'` is therefore
+invisible to every sync's tombstoning pass — manual and synced directories
+coexist in one table with no special-casing. This is a property of the existing
+code, verified, not something to add.
+
+**Design:**
+
+1. **Ownership marker.** `imported_from = 'native'`. Registered as
+   `kind: 'native'` in the `adapters` map with an adapter whose `fetchAll`
+   **throws** — mirroring the `workday`/`scim` stub pattern but deliberately:
+   a native directory must never be synced, and a loud failure beats a silent
+   wipe if someone activates it. Default `active: false`.
+
+2. **Identity anchor.** Everything downstream anchors on `object_guid`
+   (§2.1), so native rows generate a UUID at creation. `distinguished_name` is
+   NOT NULL, so synthesise: `cn=<userName>,ou=people,o=native` and
+   `cn=<name>,ou=groups,o=native`. Both stay stable across edits — renaming a
+   person must not change their anchor.
+
+3. **API surface** under the existing `directory-admin.ts` (already `org:admin`
+   gated): create/patch users and groups, add/remove members, and set
+   `worker_status = 'Inactive'` as the deprovision path — which is the same
+   tombstone the sync writes, so departure handling downstream is unchanged.
+
+4. **Guard: refuse to edit a row whose `imported_from` is not `native`.**
+   Hand-editing synced data is pointless (the next sync overwrites it) and
+   dangerous (it looks like it worked). Reject with a message naming the owning
+   source.
+
+5. **What does NOT change.** Bindings, coverage, the membership fingerprint,
+   claim writes, the connector, and the `full` interlock all work unchanged. In
+   particular, editing a group's members moves its fingerprint, so bindings go
+   stale and need re-confirmation — the Phase 0.4 control applies to native
+   directories exactly as designed.
+
 ### Phase 4.5 — surface a held binding in the UI [TODO]
 
 `binding_stale` maps to no counter on `access_runs`, so a binding held by the
