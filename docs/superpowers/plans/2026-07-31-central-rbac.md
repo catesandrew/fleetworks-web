@@ -360,7 +360,15 @@ conflated them; the hub can only ever supply the first.
 > 0.4 shipped as `bcd8c5a` (membership fingerprint; migration `0011` applied to
 > production first, since the column is in the Drizzle schema and every
 > `access_bindings` select would otherwise 500).
-> **Remaining in Phase 0: 0.6 only**, now folded into Phase 2 where the fork lands. Everything in Phases 1–3 is untouched.
+> **Remaining in Phase 0: 0.6 only**, now folded into Phase 2 where the fork lands.
+>
+> **Phase 1 SHIPPED as `6e2cbff`** (yellow-pages), migration `0018` applied —
+> 2 legacy admins carried forward to the namespaced key, legacy keys stripped,
+> `provider` preserved on all 5 users. The write gate no longer treats group
+> membership as a grant. **Correction to an earlier note in this plan: yellow-pages
+> DOES auto-deploy on merge to main** (`deploymentEnabled: {"main": true}` on both
+> `apps/api` and `apps/web`); the dual-read is what made the merge-then-migrate
+> order safe, not the absence of a deploy. Everything in Phases 1–3 is untouched.
 
 ### Phase 0 — the claim contract, and the controls Phase 2 stands on
 
