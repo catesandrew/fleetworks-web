@@ -492,6 +492,40 @@ Scoping it to one provider bounded the blast radius to that provider — not to 
 bindings that provider manages. Under `additive` none of this was reachable;
 `full` made all four lethal at once.
 
+### Phase 2.10 — prerequisites for EVER setting `enforcement: 'full'` [BLOCKING]
+
+Both reproduced as executed revokes by the third gate, at `full`, against a fake
+GoTrue. Both are unreachable at `additive` (one `revokeGrant` call site, behind
+the `enforcement !== 'full'` return), which is why the connector ships at
+`additive`. A **code interlock refuses `full` on a fleetworks target** — delete it
+only when both of these are fixed.
+
+1. **Coverage must require a binding to be PRODUCTIVE, not merely active.**
+   `coverage.set(key, entry)` runs for every active binding, and only
+   `!previewed || membershipStale` unapproves it. `membershipStale` is a
+   fingerprint over `group_members`, computed BEFORE the departure and unmapped
+   screens — so neither a departure nor an identity desync moves it. A binding
+   whose members are all unmapped or departed therefore yields **zero desired
+   grants** while asserting `{approved: true}` for its key: full revoke authority
+   with nothing to compare against. The floor guard is target-wide, so a second
+   healthy binding on another role keeps the total non-zero and it never fires.
+   Reproduced: `revokesApplied=1, revoked=[uuid-real-admin/org:admin], unmapped=1`.
+   **Fix: a binding confers coverage only if it contributes at least one desired
+   grant, and the floor guard must be per-key rather than per-target.**
+
+2. **Role validation must move to read time.** `invalidRoleError` runs only at the
+   POST and PATCH write sites. A binding row written and confirmed by a NEWER
+   build survives a rollback with `previewed = true` and a valid fingerprint,
+   confers coverage for a role this build cannot parse, and then deletes it —
+   which is exactly the rollback scenario that motivated preserving
+   `unknownRoles` in the first place. Reproduced:
+   `revoked=[uuid-victim/org:futurerole]`.
+
+**The insight worth carrying:** authority to revoke was derived from a binding's
+*existence*. It has to be derived from its *productivity* — what it actually
+contributes to desired state on this run. Three gate rounds each found a new layer
+of this same mistake, which is why the interlock is code and not a comment.
+
 ### Phase 4.5 — surface a held binding in the UI [TODO]
 
 `binding_stale` maps to no counter on `access_runs`, so a binding held by the
