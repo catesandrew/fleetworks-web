@@ -422,6 +422,39 @@ Both pre-existing, both verified in source 2026-08-01.
    error. Latent today with a single production org; real the moment there are two.
    This is a seventh hole inside a route Phase 0.2 already fixed.
 
+### Phase 0.7 update — the fix has a narrower scope than first written
+
+Closing the `uniqueTargets` fail-open by deriving targets from **bindings**
+instead of **desired grants** is correct, and it widens what `fetchActual` is
+asked for. The three existing connectors are not resilient to that:
+`github-connector.ts:60-95` loops targets with **no per-target try/catch**, so a
+404 on a deleted or renamed repo now fails that target's entire reconcile and
+blocks every other binding on it. `connector.ts:31-40` makes complete-or-throw
+deliberate ("partial results are FORBIDDEN"), so relaxing it is a larger change
+than this work should carry.
+
+**So the fix is scoped to `fleetworks` only.** github, gitlab and azure-devops
+keep the `desiredGrants`-derived target set and therefore **keep the fail-open**:
+a bound group with zero mapped members still yields no revoke for those
+providers. That is a known, recorded gap, not a solved one. Closing it properly
+means teaching those connectors to tolerate a missing target without abandoning
+complete-or-throw — its own piece of work.
+
+**The transferable lesson:** the connectors' *code* was untouched, and their
+*behaviour* changed anyway, because a shared input widened. "Additive" has to be
+judged at the behaviour boundary, not the diff.
+
+### Phase 2.5 — enforcement staging is now a live decision, not a future one
+
+Measured on the Phase 2a branch: with `enforcement` at the shipped `additive`
+default, a departed employee (`worker_status = 'Inactive'`) yields
+`{departedUsers: 1, revokesReported: 1, revokesApplied: 0}` — the tombstone
+blocks a NEW grant and never removes an existing one. **Shipping the connector
+alone deprovisions nobody**; the claim stays live in all five projects until a
+target is promoted to `full`. The staging (`report_only → additive → full`) is
+working as designed; the point is that "Phase 2 shipped" must not be read as
+"deprovisioning works".
+
 ### Phase 4.5 — surface a held binding in the UI [TODO]
 
 `binding_stale` maps to no counter on `access_runs`, so a binding held by the
