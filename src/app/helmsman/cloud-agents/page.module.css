@@ -1,0 +1,250 @@
+.page {
+  background: var(--fw-color-paper);
+  color: var(--fw-color-ink);
+  padding: clamp(32px, 6vw, 72px) clamp(24px, 5vw, 64px) clamp(48px, 8vw, 96px);
+}
+
+.inner {
+  max-width: 940px;
+  margin: 0 auto;
+}
+
+/* ---- hero ---- */
+
+.eyebrow {
+  font-family: 'Fragment Mono', ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+  font-size: 0.8125rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--helmsman-accent, #2e62c9);
+  margin: 0 0 20px;
+}
+
+.headline {
+  font-family: 'Bricolage Grotesque', var(--fw-font-sans);
+  font-weight: 600;
+  font-size: clamp(2.5rem, 4.5vw + 1rem, 4.75rem);
+  line-height: 1.03;
+  letter-spacing: -0.03em;
+  margin: 0 0 22px;
+  text-wrap: balance;
+  max-width: 18ch;
+}
+
+.lede {
+  font-size: 1.1875rem;
+  line-height: 1.55;
+  color: var(--fw-color-muted);
+  max-width: 60ch;
+  margin: 0 0 32px;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btnPrimary {
+  display: inline-flex;
+  align-items: center;
+  background: var(--fw-color-ink);
+  color: var(--fw-color-paper);
+  padding: 14px 28px;
+  border-radius: var(--fw-radius-sm, 6px);
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.2s ease;
+}
+
+.btnPrimary:hover {
+  background: var(--helmsman-accent, #111827);
+}
+
+.btnGhost {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  color: var(--fw-color-ink);
+  padding: 14px 24px;
+  border-radius: var(--fw-radius-sm, 6px);
+  font-weight: 500;
+  text-decoration: none;
+  border: 1px solid var(--fw-color-border);
+  transition: border-color 0.2s ease;
+}
+
+.btnGhost:hover {
+  border-color: var(--helmsman-accent, #111827);
+}
+
+/* ---- diagram ---- */
+
+.diagramWrap {
+  margin: clamp(44px, 7vw, 80px) 0;
+  padding: clamp(20px, 3vw, 32px);
+  border: 1px solid var(--fw-color-border);
+  border-radius: var(--fw-radius-lg, 16px);
+  background: var(--fw-color-surface);
+}
+
+.diagram {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.diagramCaption {
+  font-family: 'Fragment Mono', ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: var(--fw-color-muted);
+  text-align: center;
+  margin: 16px 0 0;
+}
+
+/* ---- sections ---- */
+
+.section {
+  margin: clamp(44px, 7vw, 80px) 0 0;
+}
+
+.sectionLabel {
+  font-family: 'Fragment Mono', ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fw-color-muted);
+  margin: 0 0 18px;
+}
+
+.sectionTitle {
+  font-family: 'Bricolage Grotesque', var(--fw-font-sans);
+  font-weight: 600;
+  font-size: clamp(1.75rem, 1.4vw + 1rem, 2.5rem);
+  line-height: 1.14;
+  letter-spacing: -0.02em;
+  margin: 0 0 16px;
+  text-wrap: balance;
+  max-width: 24ch;
+}
+
+.thesis {
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  color: var(--fw-color-ink);
+  max-width: 62ch;
+  margin: 0 0 16px;
+}
+
+.thesis .muted {
+  color: var(--fw-color-muted);
+}
+
+.quote {
+  font-family: 'Bricolage Grotesque', var(--fw-font-sans);
+  font-weight: 600;
+  font-size: clamp(1.375rem, 1.2vw + 1rem, 2rem);
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: var(--fw-color-ink);
+  border-left: 2px solid var(--helmsman-accent, #2e62c9);
+  padding-left: 24px;
+  margin: 32px 0 0;
+  max-width: 30ch;
+  text-wrap: balance;
+}
+
+/* ---- capabilities ---- */
+
+.capList {
+  list-style: none;
+  margin: 28px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+  background: var(--fw-color-border);
+  border: 1px solid var(--fw-color-border);
+  border-radius: var(--fw-radius-md, 10px);
+  overflow: hidden;
+}
+
+.cap {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 4px 18px;
+  padding: 22px clamp(18px, 3vw, 28px);
+  background: var(--fw-color-paper);
+}
+
+.capNum {
+  grid-row: span 2;
+  font-family: 'Fragment Mono', ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+  font-size: 0.9375rem;
+  color: var(--helmsman-accent, #2e62c9);
+  padding-top: 2px;
+}
+
+.capTitle {
+  font-family: 'Bricolage Grotesque', var(--fw-font-sans);
+  font-weight: 600;
+  font-size: 1.1875rem;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.capBody {
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--fw-color-muted);
+  margin: 0;
+  max-width: 60ch;
+}
+
+/* ---- roadmap note ---- */
+
+.note {
+  margin: clamp(44px, 7vw, 80px) 0 0;
+  padding: clamp(24px, 4vw, 36px);
+  border: 1px solid var(--fw-color-border);
+  border-left: 2px solid var(--helmsman-accent, #2e62c9);
+  border-radius: var(--fw-radius-md, 10px);
+  background: var(--fw-color-surface);
+}
+
+.noteText {
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  color: var(--fw-color-ink);
+  margin: 0;
+  max-width: 66ch;
+}
+
+.noteText .muted {
+  color: var(--fw-color-muted);
+}
+
+/* ---- cta ---- */
+
+.cta {
+  margin: clamp(44px, 7vw, 72px) 0 0;
+  text-align: center;
+}
+
+.ctaTitle {
+  font-family: 'Bricolage Grotesque', var(--fw-font-sans);
+  font-weight: 600;
+  font-size: clamp(1.5rem, 1.4vw + 1rem, 2.25rem);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin: 0 0 22px;
+  text-wrap: balance;
+}
+
+.ctaActions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}

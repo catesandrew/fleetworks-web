@@ -15,7 +15,10 @@ const HELMSMAN_APP = requireSuiteApp('helmsman')
 
 export default function HelmsmanPage() {
   return (
-    <main className={styles.hero} style={{ '--helmsman-accent': HELMSMAN_APP.accentColor } as CSSProperties}>
+    <main
+      className={styles.hero}
+      style={{ '--helmsman-accent': HELMSMAN_APP.accentColor } as CSSProperties}
+    >
       <div className={styles.grid}>
         <div>
           <h1 className={styles.headline}>Deployments and agents, one audit trail.</h1>
@@ -30,8 +33,8 @@ export default function HelmsmanPage() {
               plus CI/CD pipeline, run, and deployment tracking across clusters.
             </li>
             <li className={styles.featureItem}>
-              Agents as a governed resource: define, invoke (real OpenAI/Claude runtimes,
-              per-agent routing), and audit every run.
+              Agents as a governed resource: define, invoke (real OpenAI/Claude runtimes, per-agent
+              routing), and audit every run.
             </li>
             <li className={styles.featureItem}>
               Multi-agent processes &mdash; sequential, concurrent, handoff, and supervisor
@@ -57,6 +60,9 @@ export default function HelmsmanPage() {
           <div className={styles.actions}>
             <a className={styles.btnPrimary} href={HELMSMAN_APP.url}>
               Open {HELMSMAN_APP.name} →
+            </a>
+            <a className={styles.btnGhost} href="/helmsman/cloud-agents">
+              Cloud agents roadmap →
             </a>
           </div>
         </div>

@@ -95,3 +95,20 @@
 .btnPrimary:hover {
   background: var(--helmsman-accent, #111827);
 }
+
+.btnGhost {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  color: var(--fw-color-ink);
+  padding: 14px 24px;
+  border-radius: var(--fw-radius-sm, 6px);
+  font-weight: 500;
+  text-decoration: none;
+  border: 1px solid var(--fw-color-border);
+  transition: border-color 0.2s ease;
+}
+
+.btnGhost:hover {
+  border-color: var(--helmsman-accent, #111827);
+}
