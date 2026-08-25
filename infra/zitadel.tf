@@ -112,6 +112,67 @@ output "app_oidc_client_secrets" {
   sensitive   = true
 }
 
+# ── Rolodex direct-Zitadel cutover (Phase 1) — public PKCE clients ──────────
+# Distinct from zitadel_application_oidc.app["rolodex"] above (the legacy
+# Supabase-relying-party client, kept as-is — it's the runbook's rollback
+# fixture, see zitadel-phase1-prod-client-registration.md). These two are
+# rolodex's own direct Auth Code + PKCE clients: rolodex_web is a server-side
+# backend-for-frontend (apps/web/src/app/auth/callback/route.ts runs the code
+# exchange in Node, not browser JS — WEB, not USER_AGENT), rolodex_mobile is a
+# genuine native app. Both public (no client secret), JWT access tokens
+# (packages/auth's jose-based jwtVerify requires a real JWT, not an opaque
+# token — matches the local zitadel-local/seed.ts fix).
+resource "zitadel_application_oidc" "rolodex_web" {
+  org_id     = var.zitadel_org_id
+  project_id = zitadel_project.fleetworks_suite.id
+  name       = "Rolodex Web (Zitadel direct)"
+
+  redirect_uris             = ["https://rolodex.fleetworks.dev/auth/callback"]
+  post_logout_redirect_uris = ["https://rolodex.fleetworks.dev/"]
+
+  response_types = ["OIDC_RESPONSE_TYPE_CODE"]
+  grant_types    = ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"]
+  app_type       = "OIDC_APP_TYPE_WEB"
+
+  # Public client despite being server-side (auth_method NONE, no secret) —
+  # a deliberate choice, not a forced one; see the plan doc's Open Questions.
+  auth_method_type  = "OIDC_AUTH_METHOD_TYPE_NONE"
+  access_token_type = "OIDC_TOKEN_TYPE_JWT"
+
+  # Must stay false in production (relaxes redirect-URI validation) —
+  # matches the other apps above, not local's developmentMode: true.
+  dev_mode = false
+}
+
+resource "zitadel_application_oidc" "rolodex_mobile" {
+  org_id     = var.zitadel_org_id
+  project_id = zitadel_project.fleetworks_suite.id
+  name       = "Rolodex Mobile"
+
+  redirect_uris             = ["rolodex://auth/callback"]
+  post_logout_redirect_uris = ["rolodex://"]
+
+  response_types = ["OIDC_RESPONSE_TYPE_CODE"]
+  grant_types    = ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"]
+  app_type       = "OIDC_APP_TYPE_NATIVE"
+
+  auth_method_type  = "OIDC_AUTH_METHOD_TYPE_NONE"
+  access_token_type = "OIDC_TOKEN_TYPE_JWT"
+  dev_mode          = false
+}
+
+output "rolodex_web_client_id" {
+  description = "rolodex_web's client_id (public client — no client_secret exists to output)."
+  value       = zitadel_application_oidc.rolodex_web.client_id
+  sensitive   = true
+}
+
+output "rolodex_mobile_client_id" {
+  description = "rolodex_mobile's client_id (public client — no client_secret exists to output)."
+  value       = zitadel_application_oidc.rolodex_mobile.client_id
+  sensitive   = true
+}
+
 # ── Transactional email via the hub's own SES identity ───────────────────────
 # Credentials come straight from this root's IAM resources (iam.tf) — no manual
 # copy/paste of an SMTP password, and rotation is `terraform apply`.
@@ -264,5 +325,90 @@ output "yellow_pages_oidc_client_id" {
 output "yellow_pages_oidc_client_secret" {
   description = "OIDC client_secret for the yellow-pages Supabase relying party."
   value       = zitadel_application_oidc.yellow_pages.client_secret
+  sensitive   = true
+}
+
+# ── Phase 1 test/service identities — zitadel-phase1-prod-client-registration.md ──
+# Passwords are read from gitignored local files (never embedded in this
+# committed .tf), matching the jwt_profile_file pattern already used for the
+# provider's own key above.
+locals {
+  lhci_test_password = trimspace(file("${path.module}/lhci-zitadel-test-password.txt"))
+}
+
+# The phase1-verify account (standalone rolodex_web/rolodex_mobile protocol
+# verification, Step 7) existed here and was deleted after verification
+# succeeded (2026-08-25) — its only purpose was Step 7, which is done. See
+# rolodex-supabase-client-backup.json's sibling note and the plan doc's
+# Phase 1 execution record for what it verified before removal.
+
+# Lighthouse CI's dedicated login account — authenticates through
+# rolodex_web's client_id (AUTH_AUDIENCE), same invariant as
+# apps/api/src/routes/testing.ts:220-227. Never the general seed/test-admin
+# credentials.
+resource "zitadel_human_user" "lhci_test" {
+  org_id                       = var.zitadel_org_id
+  user_name                    = "lhci-zitadel-test@fleetworks.dev"
+  first_name                   = "Lighthouse"
+  last_name                    = "CI"
+  email                        = "lhci-zitadel-test@fleetworks.dev"
+  is_email_verified            = true
+  initial_password             = local.lhci_test_password
+  initial_skip_password_change = true
+}
+
+# Machine caller for testing.ts's CreateSession call (authenticates the
+# CALLER, not the account being logged in — testing.ts:66-69). No special
+# instance role: Session API's CreateSession only needs a valid authenticated
+# principal in the org, not IAM_OWNER or IAM_LOGIN_CLIENT.
+resource "zitadel_machine_user" "lhci_seed_bot" {
+  org_id      = var.zitadel_org_id
+  user_name   = "lhci-seed-bot@fleetworks.dev"
+  name        = "Lighthouse CI seed-bot (Session API caller)"
+  description = "testing.ts's ZITADEL_SEED_BOT_PAT — authenticates CreateSession calls only."
+}
+
+resource "zitadel_personal_access_token" "lhci_seed_bot" {
+  org_id  = var.zitadel_org_id
+  user_id = zitadel_machine_user.lhci_seed_bot.id
+  # Zitadel's own server-side default when this attribute is left unset —
+  # pinned explicitly (confirmed via `terraform plan` post-apply) so this
+  # config matches reality instead of drifting toward null every plan.
+  # Rotation policy for this PAT is a known open item, not automated yet.
+  expiration_date = "9999-12-31T23:59:59Z"
+}
+
+# Dedicated login-client machine user — resolves pre-mortem #2: a SEPARATE
+# IAM_LOGIN_CLIENT-scoped identity from the shared one that powers the
+# hosted Login V2 UI for every Fleetworks app (infra/zitadel-login-client.pat).
+# A compromised rolodex API only gets this narrowly-scoped PAT, not the
+# instance-wide shared one.
+resource "zitadel_machine_user" "lhci_login_client" {
+  org_id      = var.zitadel_org_id
+  user_name   = "lhci-login-client@fleetworks.dev"
+  name        = "Lighthouse CI login-client (CreateCallback caller)"
+  description = "testing.ts's ZITADEL_LOGIN_CLIENT_PAT — dedicated IAM_LOGIN_CLIENT, distinct from the shared login-client identity."
+}
+
+resource "zitadel_instance_member" "lhci_login_client" {
+  user_id = zitadel_machine_user.lhci_login_client.id
+  roles   = ["IAM_LOGIN_CLIENT"]
+}
+
+resource "zitadel_personal_access_token" "lhci_login_client" {
+  org_id          = var.zitadel_org_id
+  user_id         = zitadel_machine_user.lhci_login_client.id
+  expiration_date = "9999-12-31T23:59:59Z"
+}
+
+output "lhci_seed_bot_pat" {
+  description = "ZITADEL_SEED_BOT_PAT for apps/api's testing.ts — Phase 2 Render secret."
+  value       = zitadel_personal_access_token.lhci_seed_bot.token
+  sensitive   = true
+}
+
+output "lhci_login_client_pat" {
+  description = "ZITADEL_LOGIN_CLIENT_PAT for apps/api's testing.ts — Phase 2 Render secret."
+  value       = zitadel_personal_access_token.lhci_login_client.token
   sensitive   = true
 }

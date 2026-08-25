@@ -46,3 +46,7 @@ infra/zitadel-ids.json
 infra/fly-postgres-superuser.txt
 infra/zitadel-db-password.txt
 infra/zitadel-system-user.key
+infra/rolodex-supabase-client-backup.json
+infra/phase1-verify-password.txt
+infra/lhci-zitadel-test-password.txt
+infra/lighthouse-zitadel-pats.json
