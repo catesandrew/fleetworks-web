@@ -331,7 +331,11 @@ output "yellow_pages_oidc_client_secret" {
 # ── Phase 1 test/service identities — zitadel-phase1-prod-client-registration.md ──
 # Passwords are read from gitignored local files (never embedded in this
 # committed .tf), matching the jwt_profile_file pattern already used for the
-# provider's own key above.
+# provider's own key above. Known tradeoff (same one that pattern already
+# has, now widened): this file() call means even `terraform plan` — a
+# read-only operation — hard-fails on any machine/CI runner that doesn't
+# have this gitignored file. Anyone re-running this root elsewhere needs
+# the password delivered out-of-band first.
 locals {
   lhci_test_password = trimspace(file("${path.module}/lhci-zitadel-test-password.txt"))
 }
@@ -381,8 +385,10 @@ resource "zitadel_personal_access_token" "lhci_seed_bot" {
 # Dedicated login-client machine user — resolves pre-mortem #2: a SEPARATE
 # IAM_LOGIN_CLIENT-scoped identity from the shared one that powers the
 # hosted Login V2 UI for every Fleetworks app (infra/zitadel-login-client.pat).
-# A compromised rolodex API only gets this narrowly-scoped PAT, not the
-# instance-wide shared one.
+# IAM_LOGIN_CLIENT is itself instance-wide — this does NOT narrow the
+# capability grant — but it buys independent revocability: this PAT can be
+# rotated/revoked without touching the shared identity every app's hosted
+# login depends on, and a compromise here doesn't leak the shared secret.
 resource "zitadel_machine_user" "lhci_login_client" {
   org_id      = var.zitadel_org_id
   user_name   = "lhci-login-client@fleetworks.dev"
@@ -395,6 +401,10 @@ resource "zitadel_instance_member" "lhci_login_client" {
   roles   = ["IAM_LOGIN_CLIENT"]
 }
 
+# expiration_date pinned far-future, matching lhci_seed_bot's PAT above —
+# rotation for both is a known open item (Phase 2 prerequisite, no owner
+# assigned yet); the token value is recoverable from Terraform state
+# (S3+KMS) if the local gitignored copy is ever lost.
 resource "zitadel_personal_access_token" "lhci_login_client" {
   org_id          = var.zitadel_org_id
   user_id         = zitadel_machine_user.lhci_login_client.id
