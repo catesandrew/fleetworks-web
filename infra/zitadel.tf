@@ -338,6 +338,24 @@ output "yellow_pages_oidc_client_secret" {
 # the password delivered out-of-band first.
 locals {
   lhci_test_password = trimspace(file("${path.module}/lhci-zitadel-test-password.txt"))
+  appreview_password = trimspace(file("${path.module}/appreview-password.txt"))
+}
+
+# App Store review demo account — one of the 2 real production rolodex
+# accounts identified for Phase 2's zitadel_subject backfill (the other,
+# catesandrew@gmail.com, already exists as a Zitadel user org-wide).
+# Password matches rolodex/apps/mobile's existing REVIEW_DEMO_PASSWORD
+# exactly, so App Store reviewers' current credentials keep working
+# post-cutover — not a fresh credential to distribute.
+resource "zitadel_human_user" "appreview" {
+  org_id                       = var.zitadel_org_id
+  user_name                    = "appreview@rolodex.fleetworks.dev"
+  first_name                   = "App"
+  last_name                    = "Review"
+  email                        = "appreview@rolodex.fleetworks.dev"
+  is_email_verified            = true
+  initial_password             = local.appreview_password
+  initial_skip_password_change = true
 }
 
 # The phase1-verify account (standalone rolodex_web/rolodex_mobile protocol
