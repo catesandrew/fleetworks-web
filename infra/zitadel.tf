@@ -173,6 +173,167 @@ output "rolodex_mobile_client_id" {
   sensitive   = true
 }
 
+# ── Yellow Pages direct-Zitadel cutover (Phase 4) — public PKCE client ───────
+# Distinct from zitadel_application_oidc.yellow_pages above (the legacy
+# Supabase-relying-party client, kept untouched as the rollback fixture — see
+# yellow-pages/.omc/plans/phase4-yellow-pages-zitadel-cutover.md, Scope item 1).
+#
+# WEB, not USER_AGENT: the code exchange runs server-side in Node. Confirmed by
+# reading yellow-pages/apps/web/src/app/auth/callback/route.ts:16 — the callback
+# is a Next.js App Router route handler (`export async function GET(request:
+# NextRequest)`) with no `runtime = 'edge'` and no client component; the
+# post-cutover rewrite keeps the exchange in that same handler, mirroring
+# rolodex_web's already-verified shape. The browser never holds the
+# code_verifier or calls the token endpoint.
+#
+# Public client (auth_method NONE, no secret) + JWT access tokens, matching
+# rolodex_web exactly: @cogs/auth's jose-based jwtVerify requires a real JWT,
+# not an opaque token.
+resource "zitadel_application_oidc" "yellow_pages_web" {
+  org_id     = var.zitadel_org_id
+  project_id = zitadel_project.fleetworks_suite.id
+  name       = "Yellow Pages Web (Zitadel direct)"
+
+  redirect_uris             = ["https://yp.fleetworks.dev/auth/callback"]
+  post_logout_redirect_uris = ["https://yp.fleetworks.dev/"]
+
+  response_types = ["OIDC_RESPONSE_TYPE_CODE"]
+  grant_types    = ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"]
+  app_type       = "OIDC_APP_TYPE_WEB"
+
+  auth_method_type  = "OIDC_AUTH_METHOD_TYPE_NONE"
+  access_token_type = "OIDC_TOKEN_TYPE_JWT"
+
+  # Unlike rolodex_web (whose web tier never reads name/email off the token),
+  # yellow-pages' apps/web/src/app/api/session/route.ts reads `email`/`name`
+  # from the ID TOKEN's claims (openid-client's tokens.claims()) to populate
+  # the topbar and admin self-demotion guard. Without this, Zitadel only
+  # asserts the bare required claims (sub/aud/iss/exp) into the ID token even
+  # though `profile email` is requested in the scope — email/name land on the
+  # userinfo endpoint instead, which this app never calls. Discovered via a
+  # real production smoke test: topbar showed "Sign in" for a genuinely
+  # authenticated break-glass admin. Per-app only — no shared-project impact.
+  id_token_userinfo_assertion = true
+
+  # Must stay false in production (relaxes redirect-URI validation).
+  dev_mode = false
+}
+
+output "yellow_pages_web_client_id" {
+  description = "yellow_pages_web's client_id (public client — no client_secret exists to output)."
+  value       = zitadel_application_oidc.yellow_pages_web.client_id
+  sensitive   = true
+}
+
+# ── Chorus direct-Zitadel cutover (Phase 4) — public PKCE client ─────────────
+# Distinct from zitadel_application_oidc.app["chorus"] above (the legacy
+# Supabase-relying-party client inside the local.fleetworks_apps for_each, kept
+# untouched as the rollback fixture — see
+# chorus/.omc/plans/phase4-chorus-zitadel-cutover.md, Scope item 1 and
+# Principle 5).
+#
+# WEB, not USER_AGENT: the code exchange runs server-side in Node. Confirmed by
+# reading chorus/apps/web/src/app/auth/callback/route.ts:16,36-37 — the callback
+# is a Next.js App Router route handler (`export async function GET(request:
+# NextRequest)`) with no `runtime = 'edge'` and no client component, and it does
+# the exchange server-side today (`createSupabaseServerClient()` +
+# `exchangeCodeForSession(code)`). That route is rewritten by the plan's Scope
+# item 7, but Decision 3 ports rolodex's/yellow-pages' proven BFF session
+# subsystem — the exchange stays in this same Node handler and the browser never
+# holds the code_verifier or calls the token endpoint. Same shape as
+# rolodex_web and yellow_pages_web.
+#
+# Redirect URI matches the real production web domain — cross-checked against
+# local.fleetworks_apps.chorus.site above, which already yields
+# post_logout_redirect_uris = ["https://chorus.fleetworks.dev/"].
+#
+# Public client (auth_method NONE, no secret) + JWT access tokens, matching
+# rolodex_web and yellow_pages_web exactly: @cogs/auth's jose-based jwtVerify
+# requires a real JWT, not an opaque token.
+resource "zitadel_application_oidc" "chorus_web" {
+  org_id     = var.zitadel_org_id
+  project_id = zitadel_project.fleetworks_suite.id
+  name       = "Chorus Web (Zitadel direct)"
+
+  redirect_uris             = ["https://chorus.fleetworks.dev/auth/callback"]
+  post_logout_redirect_uris = ["https://chorus.fleetworks.dev/"]
+
+  response_types = ["OIDC_RESPONSE_TYPE_CODE"]
+  grant_types    = ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"]
+  app_type       = "OIDC_APP_TYPE_WEB"
+
+  auth_method_type  = "OIDC_AUTH_METHOD_TYPE_NONE"
+  access_token_type = "OIDC_TOKEN_TYPE_JWT"
+
+  # Set for the same reason yellow_pages_web sets it (see that block's note):
+  # chorus's plan Decision 3 ports yellow-pages' session subsystem verbatim,
+  # including the `/api/session` route that reads `email`/`name` off the ID
+  # TOKEN's claims. Without this, Zitadel asserts only sub/aud/iss/exp into the
+  # ID token even with `profile email` in scope, and those claims land on the
+  # userinfo endpoint the ported code never calls — the exact defect a real
+  # yellow-pages production smoke test caught (topbar showed "Sign in" for a
+  # genuinely authenticated admin). Per-app only, no shared-project impact.
+  id_token_userinfo_assertion = true
+
+  # Must stay false in production (relaxes redirect-URI validation).
+  dev_mode = false
+}
+
+output "chorus_web_client_id" {
+  description = "chorus_web's client_id (public client — no client_secret exists to output)."
+  value       = zitadel_application_oidc.chorus_web.client_id
+  sensitive   = true
+}
+
+# ── Yellow Pages admin-directory credential (Phase 4, Decision 0) ────────────
+# Backs apps/api/src/routes/admin-users.ts's listUsers(), which reads Supabase's
+# auth.users today and stops being populated once accounts are Zitadel-native.
+#
+# READ-ONLY BY CONSTRUCTION. ORG_OWNER_VIEWER, deliberately NOT
+# ORG_USER_MANAGER: verified against Zitadel's own cmd/defaults.yaml
+# role-permission mapping, ORG_OWNER_VIEWER grants user.read + user.global.read
+# (plus read-only org/idp/action/flow/project/policy) with ZERO write or delete
+# permissions. ORG_USER_MANAGER would additionally grant user.write,
+# user.delete, user.grant.write/delete and session.delete — none of which this
+# read path needs, and unnecessary privilege on a production credential.
+#
+# BLAST RADIUS, stated honestly: all 5 Fleetworks apps share one Zitadel org
+# (var.zitadel_org_id), so this credential can list EVERY Fleetworks user across
+# all 5 apps, not just yellow-pages'. That is wider than the Supabase
+# service-role key it replaces (scoped to yellow-pages' own project). Accepted
+# because Zitadel's permission model offers no narrower role, and the credential
+# is genuinely read-only.
+#
+# Real expiry with a named owner — deliberately NOT inheriting the
+# lhci_seed_bot / lhci_login_client PATs' 9999-12-31 no-owner gap above, which
+# those blocks themselves call a known unresolved open item. Owner: Andrew Cates
+# (catesandrew@gmail.com). Rotate before 2027-08-26.
+resource "zitadel_machine_user" "yellow_pages_admin_directory" {
+  org_id            = var.zitadel_org_id
+  user_name         = "yellow-pages-admin-directory"
+  name              = "Yellow Pages Admin Directory (read-only)"
+  description       = "Read-only user directory access for yellow-pages' /admin/users screen"
+  access_token_type = "ACCESS_TOKEN_TYPE_JWT"
+}
+
+resource "zitadel_org_member" "yellow_pages_admin_directory" {
+  org_id  = var.zitadel_org_id
+  user_id = zitadel_machine_user.yellow_pages_admin_directory.id
+  roles   = ["ORG_OWNER_VIEWER"]
+}
+
+resource "zitadel_personal_access_token" "yellow_pages_admin_directory" {
+  org_id          = var.zitadel_org_id
+  user_id         = zitadel_machine_user.yellow_pages_admin_directory.id
+  expiration_date = "2027-08-26T23:59:59Z"
+}
+
+output "yellow_pages_admin_directory_pat" {
+  description = "Read-only Zitadel Management API PAT for yellow-pages' /admin/users directory (Phase 4 Decision 0)."
+  value       = zitadel_personal_access_token.yellow_pages_admin_directory.token
+  sensitive   = true
+}
+
 # ── Transactional email via the hub's own SES identity ───────────────────────
 # Credentials come straight from this root's IAM resources (iam.tf) — no manual
 # copy/paste of an SMTP password, and rotation is `terraform apply`.
@@ -337,8 +498,9 @@ output "yellow_pages_oidc_client_secret" {
 # have this gitignored file. Anyone re-running this root elsewhere needs
 # the password delivered out-of-band first.
 locals {
-  lhci_test_password = trimspace(file("${path.module}/lhci-zitadel-test-password.txt"))
-  appreview_password = trimspace(file("${path.module}/appreview-password.txt"))
+  lhci_test_password         = trimspace(file("${path.module}/lhci-zitadel-test-password.txt"))
+  appreview_password         = trimspace(file("${path.module}/appreview-password.txt"))
+  yellowpages_admin_password = trimspace(file("${path.module}/yellowpages-admin-password.txt"))
 }
 
 # App Store review demo account — one of the 2 real production rolodex
@@ -355,6 +517,22 @@ resource "zitadel_human_user" "appreview" {
   email                        = "appreview@rolodex.fleetworks.dev"
   is_email_verified            = true
   initial_password             = local.appreview_password
+  initial_skip_password_change = true
+}
+
+# yellow-pages Phase 4 break-glass admin account. Provisioned fresh — no
+# prior Zitadel account existed for this email (unlike catesandrew@gmail.com,
+# which already existed org-wide). Preserves today's production break-glass
+# admin set of 2 (see admin-users backfill in the Phase 4 plan's Decision 2)
+# rather than silently dropping to 1 admin at cutover.
+resource "zitadel_human_user" "yellowpages_admin" {
+  org_id                       = var.zitadel_org_id
+  user_name                    = "admin@yellowpages.dev"
+  first_name                   = "Yellow Pages"
+  last_name                    = "Admin"
+  email                        = "admin@yellowpages.dev"
+  is_email_verified            = true
+  initial_password             = local.yellowpages_admin_password
   initial_skip_password_change = true
 }
 

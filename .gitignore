@@ -49,4 +49,5 @@ infra/zitadel-system-user.key
 infra/rolodex-supabase-client-backup.json
 infra/lhci-zitadel-test-password.txt
 infra/appreview-password.txt
+infra/yellowpages-admin-password.txt
 infra/lighthouse-zitadel-pats.json
