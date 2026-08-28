@@ -285,6 +285,59 @@ output "chorus_web_client_id" {
   sensitive   = true
 }
 
+# ── Helmsman direct-Zitadel cutover (Phase 4) — public PKCE client ───────────
+# Distinct from zitadel_application_oidc.app["helmsman"] above (the legacy
+# Supabase-relying-party client inside the local.fleetworks_apps for_each, kept
+# untouched as the rollback fixture — see
+# helmsman/.omc/plans/phase4-helmsman-zitadel-cutover.md, Scope item 1).
+#
+# Named helmsman_web, not coastguard_web: internal packages/service still say
+# "Coastguard" (apps/web is @coastguard-web, the Render service is
+# coastguard-api), but the repo, GitHub org, and production domain are all
+# "helmsman" — this resource and the app's own session-cookie/env-var naming
+# (Decision D6) standardize on "helmsman" going forward per explicit direction,
+# not the legacy internal brand.
+#
+# WEB, not USER_AGENT: apps/web/src/app/auth/callback/route.ts is a Next.js App
+# Router route handler that exchanges the code server-side (mirrors
+# rolodex_web/yellow_pages_web/chorus_web's already-verified shape) — the
+# browser never holds the code_verifier or calls the token endpoint.
+#
+# Public client (auth_method NONE, no secret) + JWT access tokens, matching
+# the three prior direct-Zitadel cutovers exactly: @cogs/auth's jose-based
+# jwtVerify requires a real JWT, not an opaque token.
+resource "zitadel_application_oidc" "helmsman_web" {
+  org_id     = var.zitadel_org_id
+  project_id = zitadel_project.fleetworks_suite.id
+  name       = "Helmsman Web (Zitadel direct)"
+
+  redirect_uris             = ["https://helmsman.fleetworks.dev/auth/callback"]
+  post_logout_redirect_uris = ["https://helmsman.fleetworks.dev/"]
+
+  response_types = ["OIDC_RESPONSE_TYPE_CODE"]
+  grant_types    = ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"]
+  app_type       = "OIDC_APP_TYPE_WEB"
+
+  auth_method_type  = "OIDC_AUTH_METHOD_TYPE_NONE"
+  access_token_type = "OIDC_TOKEN_TYPE_JWT"
+
+  # Set for the same reason yellow_pages_web/chorus_web set it (see those
+  # blocks' notes): without this, Zitadel asserts only sub/aud/iss/exp into
+  # the ID token even with `profile email` in scope, and email/name land on
+  # the userinfo endpoint the ported session code never calls — the exact
+  # defect a real yellow-pages production smoke test caught.
+  id_token_userinfo_assertion = true
+
+  # Must stay false in production (relaxes redirect-URI validation).
+  dev_mode = false
+}
+
+output "helmsman_web_client_id" {
+  description = "helmsman_web's client_id (public client — no client_secret exists to output)."
+  value       = zitadel_application_oidc.helmsman_web.client_id
+  sensitive   = true
+}
+
 # ── Yellow Pages admin-directory credential (Phase 4, Decision 0) ────────────
 # Backs apps/api/src/routes/admin-users.ts's listUsers(), which reads Supabase's
 # auth.users today and stops being populated once accounts are Zitadel-native.
