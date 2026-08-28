@@ -499,6 +499,7 @@ output "yellow_pages_oidc_client_secret" {
 # the password delivered out-of-band first.
 locals {
   lhci_test_password         = trimspace(file("${path.module}/lhci-zitadel-test-password.txt"))
+  chorus_lhci_test_password  = trimspace(file("${path.module}/chorus-lhci-test-password.txt"))
   appreview_password         = trimspace(file("${path.module}/appreview-password.txt"))
   yellowpages_admin_password = trimspace(file("${path.module}/yellowpages-admin-password.txt"))
 }
@@ -554,6 +555,23 @@ resource "zitadel_human_user" "lhci_test" {
   email                        = "lhci-zitadel-test@fleetworks.dev"
   is_email_verified            = true
   initial_password             = local.lhci_test_password
+  initial_skip_password_change = true
+}
+
+# chorus's own LHCI account -- deliberately NOT the shared lhci_test above
+# (that one is rolodex-scoped, per testing.ts:220-227's AUTH_AUDIENCE
+# invariant). Matches the existing production users.email row for
+# lhci-test@chorus.fleetworks.dev exactly, so Phase 4's providerSubject
+# backfill (US-006) correlates against a real identity instead of leaving
+# that row un-backfillable.
+resource "zitadel_human_user" "chorus_lhci_test" {
+  org_id                       = var.zitadel_org_id
+  user_name                    = "lhci-test@chorus.fleetworks.dev"
+  first_name                   = "Lighthouse"
+  last_name                    = "CI"
+  email                        = "lhci-test@chorus.fleetworks.dev"
+  is_email_verified            = true
+  initial_password             = local.chorus_lhci_test_password
   initial_skip_password_change = true
 }
 
