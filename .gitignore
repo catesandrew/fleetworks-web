@@ -51,4 +51,9 @@ infra/lhci-zitadel-test-password.txt
 infra/appreview-password.txt
 infra/yellowpages-admin-password.txt
 infra/chorus-lhci-test-password.txt
+infra/warden-admin-alpha-password.txt
+infra/warden-dev-alpha-password.txt
+infra/warden-smoketest-password.txt
+infra/warden-lhci-test-password.txt
+infra/warden-appreview-password.txt
 infra/lighthouse-zitadel-pats.json
