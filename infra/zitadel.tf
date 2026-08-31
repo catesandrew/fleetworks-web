@@ -338,6 +338,65 @@ output "helmsman_web_client_id" {
   sensitive   = true
 }
 
+# ── Helmsman mobile direct-Zitadel cutover (Phase 4c) — public PKCE client ──
+# helmsman's Expo app (apps/mobile), cutting over from Supabase JWTs to direct
+# Auth Code + PKCE. Distinct from helmsman_web above: a genuine native app, so
+# NATIVE app type and a custom URI scheme redirect, not an https callback.
+#
+# Named helmsman_mobile, not coastguard_mobile — same reasoning as
+# helmsman_web's block above: internal packages still say "Coastguard"
+# (@coastguard/mobile, coastguard-api), but repo, domain, and all new infra
+# standardize on "helmsman".
+#
+# redirect_uris matches expo-auth-session's makeRedirectUri({ path:
+# 'auth/callback' }) output for scheme 'helmsman' (apps/mobile/app.config.ts:10)
+# BYTE FOR BYTE. Zitadel does exact-match redirect validation.
+#
+# Public client (auth_method NONE) is mandatory, not stylistic: a client secret
+# shipped inside an app binary is not a secret. JWT access tokens because
+# @cogs/auth's jose-based jwtVerify requires a real JWT.
+#
+# NOTE: this client's client_id must be appended to helmsman's API
+# AUTH_AUDIENCE (Render dashboard), making it the comma-separated pair
+# "<helmsman_web_id>,<helmsman_mobile_id>", before the mobile build ships —
+# @cogs/auth@0.7.0's checkAuthorizedParty matches a token's azp/client_id
+# against ANY entry in that allowlist, so a client id absent from the list is
+# rejected. Flip the value only AFTER the API is running @cogs/auth@0.7.0:
+# 0.6.0 compares the whole string by exact equality and would reject every
+# web token too. See helmsman/.omc/plans/mobile-zitadel-cutover.md, D1.
+resource "zitadel_application_oidc" "helmsman_mobile" {
+  org_id     = var.zitadel_org_id
+  project_id = zitadel_project.fleetworks_suite.id
+  name       = "Helmsman Mobile"
+
+  redirect_uris             = ["helmsman://auth/callback"]
+  post_logout_redirect_uris = ["helmsman://"]
+
+  response_types = ["OIDC_RESPONSE_TYPE_CODE"]
+  grant_types    = ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"]
+  app_type       = "OIDC_APP_TYPE_NATIVE"
+
+  auth_method_type  = "OIDC_AUTH_METHOD_TYPE_NONE"
+  access_token_type = "OIDC_TOKEN_TYPE_JWT"
+
+  # Same reason helmsman_web sets it: without this Zitadel asserts only
+  # sub/aud/iss/exp into the ID token even with `profile email` in scope, and
+  # email/name land only on the userinfo endpoint. The mobile app decodes the
+  # ID token locally for display (decodeIdTokenClaims) and never calls
+  # userinfo, so without this the signed-in user renders nameless.
+  # rolodex_mobile omits this — deliberately NOT copied.
+  id_token_userinfo_assertion = true
+
+  # Must stay false in production (relaxes redirect-URI validation).
+  dev_mode = false
+}
+
+output "helmsman_mobile_client_id" {
+  description = "helmsman_mobile's client_id (public client — no client_secret exists to output)."
+  value       = zitadel_application_oidc.helmsman_mobile.client_id
+  sensitive   = true
+}
+
 # ── Yellow Pages admin-directory credential (Phase 4, Decision 0) ────────────
 # Backs apps/api/src/routes/admin-users.ts's listUsers(), which reads Supabase's
 # auth.users today and stops being populated once accounts are Zitadel-native.
