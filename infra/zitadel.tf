@@ -225,6 +225,67 @@ output "yellow_pages_web_client_id" {
   sensitive   = true
 }
 
+# ── Yellow Pages mobile direct-Zitadel cutover (Phase 4c) — public PKCE client ──
+# yellow-pages' Expo app (apps/mobile), cutting over from Supabase-brokered
+# OAuth to direct Auth Code + PKCE. Distinct from yellow_pages_web above: a
+# genuine native app, so NATIVE app type and a custom URI scheme redirect,
+# not an https callback. Also distinct from the legacy
+# zitadel_application_oidc.yellow_pages (the Supabase relying-party client
+# kept as the Phase 4 rollback fixture) — do not confuse the three.
+#
+# redirect_uris matches expo-auth-session's makeRedirectUri({ path:
+# 'auth/callback' }) output for scheme 'yellowpages'
+# (yellow-pages/apps/mobile/app.config.js:11) BYTE FOR BYTE. Zitadel does
+# exact-match redirect validation.
+#
+# Public client (auth_method NONE) is mandatory, not stylistic: a client
+# secret shipped inside an app binary is not a secret. JWT access tokens
+# because @cogs/auth's jose-based jwtVerify requires a real JWT.
+#
+# NOTE: this client's client_id must be appended to yellow-pages' API
+# AUTH_AUDIENCE (Render dashboard, srv-da3rhk740ujc73c7bbbg), making it the
+# comma-separated pair "388024104566922450,<yellow_pages_mobile_id>", before
+# the mobile build ships — @cogs/auth@0.7.0's checkAuthorizedParty matches a
+# token's azp/client_id against ANY entry in that allowlist, so a client id
+# absent from the list is rejected. Flip the value only AFTER the API is
+# running @cogs/auth@0.7.0: yellow-pages is currently on 0.4.0, which has no
+# allowlist parsing at all. See
+# yellow-pages/.omc/plans/mobile-zitadel-cutover.md, D1 and Step 2.
+resource "zitadel_application_oidc" "yellow_pages_mobile" {
+  org_id     = var.zitadel_org_id
+  project_id = zitadel_project.fleetworks_suite.id
+  name       = "Yellow Pages Mobile"
+
+  redirect_uris             = ["yellowpages://auth/callback"]
+  post_logout_redirect_uris = ["yellowpages://"]
+
+  response_types = ["OIDC_RESPONSE_TYPE_CODE"]
+  grant_types    = ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"]
+  app_type       = "OIDC_APP_TYPE_NATIVE"
+
+  auth_method_type  = "OIDC_AUTH_METHOD_TYPE_NONE"
+  access_token_type = "OIDC_TOKEN_TYPE_JWT"
+
+  # Set for the same reason yellow_pages_web sets it, and this app has
+  # already been burned by omitting it: without this Zitadel asserts only
+  # sub/aud/iss/exp into the ID token even with `profile email` in scope, and
+  # email/name land only on the userinfo endpoint. yellow_pages_web's own
+  # comment (above) records the production smoke test where the topbar showed
+  # "Sign in" for a genuinely authenticated admin. The mobile app decodes the
+  # ID token locally for display (decodeIdTokenClaims) and never calls
+  # userinfo. rolodex_mobile omits this — deliberately NOT copied.
+  id_token_userinfo_assertion = true
+
+  # Must stay false in production (relaxes redirect-URI validation).
+  dev_mode = false
+}
+
+output "yellow_pages_mobile_client_id" {
+  description = "yellow_pages_mobile's client_id (public client — no client_secret exists to output)."
+  value       = zitadel_application_oidc.yellow_pages_mobile.client_id
+  sensitive   = true
+}
+
 # ── Chorus direct-Zitadel cutover (Phase 4) — public PKCE client ─────────────
 # Distinct from zitadel_application_oidc.app["chorus"] above (the legacy
 # Supabase-relying-party client inside the local.fleetworks_apps for_each, kept
