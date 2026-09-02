@@ -513,6 +513,123 @@ output "helmsman_mobile_client_id" {
   sensitive   = true
 }
 
+# ── Warden direct-Zitadel cutover (Phase 4) — public PKCE web client ────────
+# warden's Next.js app (apps/web), cutting over from an indirect Supabase
+# custom-OIDC relying-party config to direct Auth Code + PKCE. Mobile is out
+# of scope for this phase (accepted breakage, Decision 0 in
+# warden/.omc/plans/phase4-warden-zitadel-cutover.md) — web client only.
+#
+# NOTE: this client's client_id must equal BOTH the API's AUTH_AUDIENCE
+# (Render dashboard, service srv-da3rhjgae00c739285ug / "tfe-gatehouse-api")
+# AND web's ZITADEL_CLIENT_ID (Vercel Production) exactly — the
+# AUTH_AUDIENCE == ZITADEL_CLIENT_ID == warden_web invariant stated in the
+# plan's Baseline Facts, carried from rolodex/apps/api/src/routes/testing.ts:220-227's
+# own documented warning about this exact mismatch class. Set at Runbook
+# steps 19/20, in the atomic issuer-flip sequence — never independently.
+resource "zitadel_application_oidc" "warden_web" {
+  org_id     = var.zitadel_org_id
+  project_id = zitadel_project.fleetworks_suite.id
+  name       = "Warden Web (Zitadel direct)"
+
+  redirect_uris             = ["https://warden.fleetworks.dev/auth/callback"]
+  post_logout_redirect_uris = ["https://warden.fleetworks.dev/"]
+
+  response_types = ["OIDC_RESPONSE_TYPE_CODE"]
+  grant_types    = ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"]
+  app_type       = "OIDC_APP_TYPE_WEB"
+
+  auth_method_type  = "OIDC_AUTH_METHOD_TYPE_NONE"
+  access_token_type = "OIDC_TOKEN_TYPE_JWT"
+
+  # Same reason chorus_web/yellow_pages_web set it: warden's ported BFF
+  # session subsystem reads email/name off the ID token's claims. Without
+  # this, Zitadel asserts only sub/aud/iss/exp into the ID token even with
+  # `profile email` in scope — the exact defect a yellow-pages production
+  # smoke test caught. warden ALSO backstops this with its own
+  # userinfo-enrichment subsystem (Decision 2c) for the access-token side,
+  # but the ID token still needs this flag for the BFF session claims.
+  id_token_userinfo_assertion = true
+
+  # Must stay false in production (relaxes redirect-URI validation).
+  dev_mode = false
+}
+
+output "warden_web_client_id" {
+  description = "warden_web's client_id (public client — no client_secret exists to output)."
+  value       = zitadel_application_oidc.warden_web.client_id
+  sensitive   = true
+}
+
+# ── Warden Phase 4 human identities — 5 accounts, matching the plan's ───────
+# canonical account/resource table (Baseline Facts). Two real production
+# accounts (admin@alpha-corp.com, dev@alpha-corp.com) provisioned fresh
+# because they only exist in Supabase auth.users today; catesandrew@gmail.com
+# needs no new resource here (already exists org-wide, per rolodex's
+# provisioning). catesandrew+smoketest@gmail.com, appreview, and a dedicated
+# LHCI account round out the 5.
+resource "zitadel_human_user" "warden_admin_alpha" {
+  org_id                       = var.zitadel_org_id
+  user_name                    = "admin@alpha-corp.com"
+  first_name                   = "Alpha"
+  last_name                    = "Admin"
+  email                        = "admin@alpha-corp.com"
+  is_email_verified            = true
+  initial_password             = local.warden_admin_alpha_password
+  initial_skip_password_change = true
+}
+
+resource "zitadel_human_user" "warden_dev_alpha" {
+  org_id                       = var.zitadel_org_id
+  user_name                    = "dev@alpha-corp.com"
+  first_name                   = "Alpha"
+  last_name                    = "Dev"
+  email                        = "dev@alpha-corp.com"
+  is_email_verified            = true
+  initial_password             = local.warden_dev_alpha_password
+  initial_skip_password_change = true
+}
+
+resource "zitadel_human_user" "warden_smoketest" {
+  org_id                       = var.zitadel_org_id
+  user_name                    = "catesandrew+smoketest@gmail.com"
+  first_name                   = "Warden"
+  last_name                    = "Smoketest"
+  email                        = "catesandrew+smoketest@gmail.com"
+  is_email_verified            = true
+  initial_password             = local.warden_smoketest_password
+  initial_skip_password_change = true
+}
+
+# App Store review demo account — Decision 0: password matches warden's
+# existing REVIEW_DEMO_PASSWORD exactly (apps/mobile/.env.local), so current
+# App Store reviewer credentials keep working post-cutover for the web half.
+# Mobile itself stays broken post-cutover (accepted breakage).
+resource "zitadel_human_user" "warden_appreview" {
+  org_id                       = var.zitadel_org_id
+  user_name                    = "appreview@warden.fleetworks.dev"
+  first_name                   = "App"
+  last_name                    = "Review"
+  email                        = "appreview@warden.fleetworks.dev"
+  is_email_verified            = true
+  initial_password             = local.warden_appreview_password
+  initial_skip_password_change = true
+}
+
+# warden's own dedicated LHCI account — deliberately NOT the shared
+# lhci_test/chorus_lhci_test accounts above (each app's LHCI account
+# authenticates through that app's OWN client_id / AUTH_AUDIENCE, per
+# testing.ts:220-227's invariant).
+resource "zitadel_human_user" "warden_lhci_test" {
+  org_id                       = var.zitadel_org_id
+  user_name                    = "lhci-test@warden.fleetworks.dev"
+  first_name                   = "Lighthouse"
+  last_name                    = "CI"
+  email                        = "lhci-test@warden.fleetworks.dev"
+  is_email_verified            = true
+  initial_password             = local.warden_lhci_test_password
+  initial_skip_password_change = true
+}
+
 # ── Yellow Pages admin-directory credential (Phase 4, Decision 0) ────────────
 # Backs apps/api/src/routes/admin-users.ts's listUsers(), which reads Supabase's
 # auth.users today and stops being populated once accounts are Zitadel-native.
@@ -726,10 +843,15 @@ output "yellow_pages_oidc_client_secret" {
 # have this gitignored file. Anyone re-running this root elsewhere needs
 # the password delivered out-of-band first.
 locals {
-  lhci_test_password         = trimspace(file("${path.module}/lhci-zitadel-test-password.txt"))
-  chorus_lhci_test_password  = trimspace(file("${path.module}/chorus-lhci-test-password.txt"))
-  appreview_password         = trimspace(file("${path.module}/appreview-password.txt"))
-  yellowpages_admin_password = trimspace(file("${path.module}/yellowpages-admin-password.txt"))
+  lhci_test_password          = trimspace(file("${path.module}/lhci-zitadel-test-password.txt"))
+  chorus_lhci_test_password   = trimspace(file("${path.module}/chorus-lhci-test-password.txt"))
+  appreview_password          = trimspace(file("${path.module}/appreview-password.txt"))
+  yellowpages_admin_password  = trimspace(file("${path.module}/yellowpages-admin-password.txt"))
+  warden_admin_alpha_password = trimspace(file("${path.module}/warden-admin-alpha-password.txt"))
+  warden_dev_alpha_password   = trimspace(file("${path.module}/warden-dev-alpha-password.txt"))
+  warden_smoketest_password   = trimspace(file("${path.module}/warden-smoketest-password.txt"))
+  warden_appreview_password   = trimspace(file("${path.module}/warden-appreview-password.txt"))
+  warden_lhci_test_password   = trimspace(file("${path.module}/warden-lhci-test-password.txt"))
 }
 
 # App Store review demo account — one of the 2 real production rolodex
